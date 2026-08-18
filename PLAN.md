@@ -108,7 +108,7 @@ Branch: `wave-1/foundations`
 - **Gate (whole wave):** both modules' tests + cumulative E2E (#1, #2) green after merge of both branches.
 - **Human checkpoint:** art review — does a test drawing look right on the dino?
 
-### Wave 3 — Backend platform  `[ ] not started` *(3 opus agents, SEQUENTIAL chunks, one branch)* **⚠ requires `.env` secrets**
+### Wave 3 — Backend platform  `[x] done` *(3 opus agents, SEQUENTIAL chunks, one branch)* **⚠ requires `.env` secrets**
 Branch: `wave-3/backend` — every chunk continues this same branch. *Human feedback after
 Wave 2: ~30-minute agent runs are too long; chunks below target well under that, each with
 its own gate (build + module tests + cumulative `pnpm e2e` green) before the next launches.*
@@ -132,13 +132,13 @@ its own gate (build + module tests + cumulative `pnpm e2e` green) before the nex
       lobby create/get lifecycle; structured errors for bad uploads.
 
 **Chunk 3.3 — Colyseus room** *(1 opus agent)*
-- [ ] LobbyRoom: join-code rooms, synced player map `{id, name, modelSlug, textureHash}`,
+- [x] LobbyRoom: join-code rooms, synced player map `{id, name, modelSlug, textureHash}`,
       avatar-updated fanout as a direct in-process call from the API route (single process in
       v1 — no cross-process pub/sub needed)
-- [ ] **Integration test (@colyseus/testing):** client A joins lobby → POST fixture texture →
+- [x] **Integration test (@colyseus/testing):** client A joins lobby → POST fixture texture →
       client B's room state gets new hash → `GET /textures/:hash` bytes match upload
-- **Gate (whole wave):** all integration tests green against real Neon + Upstash; cumulative
-  E2E green.
+- **Gate (whole wave):** `[x]` all integration tests green against real Neon + Upstash
+  (`pnpm test --force` 67/67); cumulative E2E green (`pnpm e2e` 6/6); `pnpm build` clean.
 
 ### Wave 4 — Mobile capture flow & flagship E2E  `[ ] not started` *(1 opus agent)*
 Branch: `wave-4/integration`
@@ -361,3 +361,48 @@ Append-only. Every agent adds a line when it finishes (or blocks): `date — wav
   `.env` (verified: 7 skipped, 1 pass, exit 0). (h) `joinUrl` is
   `${PUBLIC_WEB_URL}/?lobby=CODE` — a query param, so it works with today's single-page web app
   and whatever router Wave 4 picks.
+- 2026-08-18 — Wave 3 / Chunk 3.3 Colyseus room — **done, WAVE 3 COMPLETE** — branch
+  `wave-3/backend`. `LobbyRoom` is live: `gameServer.define('lobby', LobbyRoom).filterBy(['code'])`
+  gives **one room per lobby code**, so clients only ever call
+  `joinOrCreate('lobby', {code, name?, modelSlug?, playerId?, spectator?})` and never handle a
+  Colyseus room id. `onCreate` validates the code against Postgres and refuses an unknown or
+  closed lobby with a structured `ServerError` (`ROOM_ERROR_CODES.lobbyNotFound` 4040 /
+  `lobbyClosed` 4090 / `invalidJoinOptions` 4000) — a typo'd code can no longer conjure an empty
+  world. `autoDispose` cleans up the empty room; a `roomsByCode` registry (a Map, not Redis —
+  single process in v1) routes the fan-out. Colyseus wiring moved out of `index.ts` into
+  `src/game-server.ts` (`createGameServer(app)` + `defineRooms`) so the integration test boots
+  the *real* wiring rather than a lookalike; `index.ts` now just calls it, and that is where
+  `setAvatarBroadcaster(applyAvatarUpdate)` happens. `pnpm build` clean, `pnpm test --force`
+  **67/67** node (14 shared + **21 server**, up from 14, + 32 pipeline) against real Neon +
+  Upstash, `pnpm e2e` 6/6. Notes for Wave 4: (a) **`state.players` is keyed two ways on purpose**
+  — by Colyseus `sessionId` for a live WS client, and by `playerId` (a uuid) for someone in the
+  lobby with no socket: a phone that uploaded over plain HTTP, or an uploader who closed the tab.
+  `keyIsPlayerId(key)` tells them apart, and the two key spaces can't collide (9 chars vs 36).
+  Consequence the projector depends on: **a dino that has a drawing survives its owner
+  disconnecting.** (b) The fan-out matches the uploader by `playerId` and, failing that, by
+  **name** (which is how the REST layer already identifies a person within a lobby), then adopts
+  the real id — so a client that joined the room *before* it had a persisted playerId does not
+  end up with two dinos. The uploader's display name is read from Postgres inside the room
+  because `AvatarUpdatedMessageSchema` carries no name; the route layer was not touched.
+  (c) **position/heading are server-assigned once, at join** — `spawnFor(playerId)` hashes the
+  id into a point on a 4–8 m ring facing the origin, so it is identical in every client's copy
+  and stable across reconnects. Nothing moves them yet: Wave 2's wander is still computed
+  locally per browser, and the `move` message handler exists but no client sends one. That makes
+  `spawnFor` the natural seed for the **two-client consistency follow-up** — make motion
+  server-authoritative (or issue seed + synced clock) from there. Note Colyseus's `'number'`
+  field is float32 on the wire, so compare positions with a tolerance, never `deepEqual`.
+  (d) **Additive contract changes** in `packages/shared/src/room.ts`: `LOBBY_ROOM_FILTER`,
+  `LobbyJoinOptionsSchema`/`LobbyJoinOptions` (the real wire options — `code` required,
+  everything else optional so a spectator can join with `{code}` alone), and `ROOM_ERROR_CODES`.
+  The frozen `JoinLobbyOptionsSchema` is untouched. (e) **Spectators** (`{code}` with no `name`,
+  or `spectator: true`) see the whole world and add no dino — that is the projector view, and
+  `room.spectatorCount` reports them. (f) New test `apps/server/test/lobby-room.test.mjs` (7
+  tests) is the wave's flagship: real Fastify + real Colyseus on one `http.Server`, real
+  `colyseus.js` WS clients via `@colyseus/testing` `boot(gameServer)`, real `fetch` over a real
+  socket (not `inject`), real Neon + Upstash; the upload→both-clients fan-out lands in ~600 ms
+  against a 5 s budget. Devdeps added: `@colyseus/testing@^0.16` + `colyseus.js@^0.16` — **pin
+  the 0.16 line**, the 0.17 default drags in `@colyseus/core@0.17` and conflicts. (g) `boot()`
+  binds port **2568** and ignores its `port` argument, and it needs Fastify `ready()` but NOT
+  `listen()` — Wave 1's `app.ts` factory is exactly what makes that possible. (h) The PNG
+  fixture builder is now shared at `apps/server/test/fixture-png.mjs` (was duplicated inside
+  `rest-api.test.mjs`). (i) Room tests skip cleanly with no `.env` (verified: 7 skipped, exit 0).

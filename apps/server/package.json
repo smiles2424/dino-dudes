@@ -9,7 +9,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "test": "tsc -p tsconfig.json && node --test test/data-layer.test.mjs test/rest-api.test.mjs",
+    "test": "tsc -p tsconfig.json && node --test test/data-layer.test.mjs test/rest-api.test.mjs test/lobby-room.test.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio"
@@ -29,8 +29,10 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@colyseus/testing": "^0.16.3",
     "@types/node": "^22.10.2",
     "@types/pg": "^8.23.1",
+    "colyseus.js": "^0.16.22",
     "drizzle-kit": "^0.31.10",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
