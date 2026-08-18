@@ -54,7 +54,7 @@ jobs:
         run: pnpm validate:connections
 
       - name: Install Playwright browser
-        run: pnpm --filter @dino/e2e exec playwright install --with-deps chromium
+        run: pnpm --filter @dino/e2e exec playwright install --with-deps
 
       - name: E2E
         env:
