@@ -237,6 +237,60 @@ export function cleanupLevels(src: ImageDataLike, options: LevelsOptions = {}): 
 }
 
 /**
+ * Extra pixels cleared INSIDE the safe area, on top of the margin itself.
+ *
+ * The printed guide line is 0.4 mm wide, which is ~2.6 px at texture scale,
+ * and it is centred exactly ON the safe-area boundary — so half of it already
+ * falls inside. Add detection error (up to ~6 source px, which is a few
+ * texture px) and 6 px of overrun clears it with room to spare.
+ */
+export const MARGIN_OVERRUN_PX = 6;
+
+/**
+ * Wipes the template's own printed furniture out of the finished texture.
+ *
+ * The drawable quad maps to the full 1024², but the printed sheet puts a
+ * dashed "DRAW INSIDE THIS BOX" guide and its label in the outer 10 mm of that
+ * quad. Both are therefore INSIDE the texture, and without this step every
+ * dinosaur would wear a dashed grey rectangle. Tinting the guide light enough
+ * for the levels pass to swallow would work on one printer and not the next,
+ * so the pipeline solves it geometrically instead: the frozen spec already
+ * says the drawing lives inside `TEXTURE_SAFE_AREA` and that WS-C's UV unwrap
+ * stays inside it too, which makes everything outside that box — by
+ * definition — not the user's drawing.
+ *
+ * The cost is that a stroke wandering outside the printed box is clipped. That
+ * is the right trade: WS-C would crop it anyway, and the alternative is a
+ * half-erased stroke smeared into a marker's quiet zone.
+ */
+export function clearTemplateMargin(
+  img: ImageDataLike,
+  safeArea: { x: number; y: number; width: number; height: number },
+  overrun = MARGIN_OVERRUN_PX,
+): ImageDataLike {
+  const left = safeArea.x + overrun;
+  const top = safeArea.y + overrun;
+  const right = safeArea.x + safeArea.width - overrun;
+  const bottom = safeArea.y + safeArea.height - overrun;
+
+  for (let y = 0; y < img.height; y++) {
+    const outsideRow = y < top || y >= bottom;
+    for (let x = 0; x < img.width; x++) {
+      if (!outsideRow && x >= left && x < right) {
+        x = right - 1; // skip the interior in one jump
+        continue;
+      }
+      const i = (y * img.width + x) * 4;
+      img.data[i] = 255;
+      img.data[i + 1] = 255;
+      img.data[i + 2] = 255;
+      img.data[i + 3] = 255;
+    }
+  }
+  return img;
+}
+
+/**
  * Variance of the Laplacian over the luminance plane — the standard cheap
  * focus measure. Reported (not enforced) so Wave 4 can nudge the user.
  */

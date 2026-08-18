@@ -29,7 +29,7 @@ import {
   type Point,
   type Quad,
 } from './image.js';
-import { cleanupLevels } from './levels.js';
+import { cleanupLevels, clearTemplateMargin } from './levels.js';
 import { rasterizeTemplate } from './rasterize.js';
 import { computeLayout } from './template.js';
 import { warpPerspective, warpQuadToTexture } from './warp.js';
@@ -188,7 +188,9 @@ export function renderGoldenTexture(seed: number, pxPerMm = SHEET_PX_PER_MM): Im
     height: TEXTURE.height,
     supersample: 'auto',
   });
-  return cleanupLevels(raw);
+  // Same two cleanup steps `processPhoto` runs, in the same order — a golden
+  // is "the ideal output of the pipeline", not "the ideal warp".
+  return clearTemplateMargin(cleanupLevels(raw), TEXTURE_SAFE_AREA);
 }
 
 // ── Photo synthesis ────────────────────────────────────────────────────────

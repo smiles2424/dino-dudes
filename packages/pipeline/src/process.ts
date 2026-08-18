@@ -34,7 +34,13 @@ import {
   type PipelineQuality,
 } from '@dino/shared';
 import { detectDrawableQuad, quadGeometryQuality, type DetectionResult } from './detect.js';
-import { cleanupLevels, meanLuminance, sharpness, type LevelsOptions } from './levels.js';
+import {
+  cleanupLevels,
+  clearTemplateMargin,
+  meanLuminance,
+  sharpness,
+  type LevelsOptions,
+} from './levels.js';
 import type { ImageDataLike } from './image.js';
 import { autoSupersample, warpQuadToTexture } from './warp.js';
 
@@ -45,6 +51,12 @@ export interface ProcessOptions {
   levels?: LevelsOptions | null;
   /** Warp supersampling; `'auto'` (default) picks from the quad's source size. */
   supersample?: number | 'auto';
+  /**
+   * Wipe everything outside `TEXTURE_SAFE_AREA` — the printed guide box and
+   * its label live there. Defaults to true; set false only to inspect what the
+   * warp actually recovered.
+   */
+  clearMargin?: boolean;
 }
 
 export interface ProcessResult {
@@ -80,8 +92,14 @@ export function processPhoto(photo: ImageDataLike, options: ProcessOptions = {})
     supersample,
   });
 
-  const texture =
-    options.levels === null ? rawTexture : cleanupLevels(rawTexture, options.levels ?? {});
+  // `levels: null` means "show me exactly what the warp recovered", so it
+  // skips the margin wipe too — both are cleanup, and rawTexture is never
+  // mutated in place.
+  let texture = rawTexture;
+  if (options.levels !== null) {
+    texture = cleanupLevels(rawTexture, options.levels ?? {});
+    if (options.clearMargin !== false) clearTemplateMargin(texture, TEXTURE_SAFE_AREA);
+  }
 
   const geometry = quadGeometryQuality(detection.quad, photo);
   const quality: PipelineQuality = {

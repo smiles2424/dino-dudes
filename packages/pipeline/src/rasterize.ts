@@ -44,11 +44,56 @@ function fillRect(
   }
 }
 
+/** Grey level of the printed "DRAW INSIDE THIS BOX" guide, matching the SVG/PDF. */
+const GUIDE_GREY = 176; // #b0b0b0
+
 /**
- * Renders the template's page + markers (and optionally the drawable-quad
- * guide box) to a greyscale-in-RGBA raster at `pixelsPerMm`.
+ * Draws the dashed guide box exactly where the printed sheet has it.
+ *
+ * This matters: the guide sits 10 mm inside the drawable quad, so it is INSIDE
+ * the region that becomes the texture — every real photo of a real printed
+ * sheet has it. Rendering it here is what lets the golden suite prove the
+ * pipeline wipes it (see `clearTemplateMargin`) instead of shipping a dashed
+ * rectangle around every dinosaur.
  */
-export function rasterizeTemplate(pixelsPerMm = 6): RasterImage {
+function strokeDashedRect(
+  img: RasterImage,
+  x: number,
+  y: number,
+  size: number,
+  lineWidth: number,
+  dash: [number, number],
+  pxPerMm: number,
+  value: number,
+): void {
+  const period = dash[0] + dash[1];
+  const half = lineWidth / 2;
+  const run = (fromX: number, fromY: number, along: 'x' | 'y'): void => {
+    for (let t = 0; t < size; t += period) {
+      const len = Math.min(dash[0], size - t);
+      if (along === 'x') fillRect(img, fromX + t, fromY - half, len, lineWidth, pxPerMm, value);
+      else fillRect(img, fromX - half, fromY + t, lineWidth, len, pxPerMm, value);
+    }
+  };
+  run(x, y, 'x');
+  run(x, y + size, 'x');
+  run(x, y, 'y');
+  run(x + size, y, 'y');
+}
+
+export interface RasterizeOptions {
+  /**
+   * Include the printed guide box. Defaults to true, because a real photo
+   * always has it and the pipeline has to cope.
+   */
+  guide?: boolean;
+}
+
+/**
+ * Renders the template's page, markers and drawable-quad guide box to a
+ * greyscale-in-RGBA raster at `pixelsPerMm`.
+ */
+export function rasterizeTemplate(pixelsPerMm = 6, options: RasterizeOptions = {}): RasterImage {
   const l = computeLayout();
   const width = Math.round(l.page.width * pixelsPerMm);
   const height = Math.round(l.page.height * pixelsPerMm);
@@ -77,6 +122,10 @@ export function rasterizeTemplate(pixelsPerMm = 6): RasterImage {
         );
       }
     }
+  }
+
+  if (options.guide !== false) {
+    strokeDashedRect(img, l.guide.x, l.guide.y, l.guide.size, 0.4, [3, 2], pixelsPerMm, GUIDE_GREY);
   }
 
   return img;

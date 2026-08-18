@@ -219,26 +219,37 @@ test('goldens are honest: they match a warp-free render of the same drawing', ()
   }
 });
 
-test('the drawing lands inside TEXTURE_SAFE_AREA, as WS-C requires', async () => {
-  const { photo } = await fixture(GOLDEN_FIXTURES[0]);
-  const { texture } = processPhoto(photo);
+/** Fraction of the margin outside TEXTURE_SAFE_AREA that has ink in it. */
+function marginInkFraction(texture) {
   const { x, y, width, height } = TEXTURE_SAFE_AREA;
-  let inkOutside = 0;
+  let ink = 0;
   for (let py = 0; py < texture.height; py++) {
     const inRows = py >= y && py < y + height;
     for (let px = 0; px < texture.width; px++) {
       if (inRows && px >= x && px < x + width) continue;
       const i = (py * texture.width + px) * 4;
       const lum = 0.299 * texture.data[i] + 0.587 * texture.data[i + 1] + 0.114 * texture.data[i + 2];
-      if (lum < 200) inkOutside++;
+      if (lum < 200) ink++;
     }
   }
-  const border = TEXTURE.width * TEXTURE.height - width * height;
+  return ink / (TEXTURE.width * TEXTURE.height - width * height);
+}
+
+test("the printed guide box is wiped, so dinosaurs don't wear a dashed rectangle", async () => {
+  // The template's "DRAW INSIDE THIS BOX" guide sits 10mm inside the drawable
+  // quad, which means it is INSIDE the texture — every photo of a real printed
+  // sheet has it. `clearTemplateMargin` removes it. This test proves both
+  // halves: the guide really is there, and the pipeline really removes it.
+  const { photo } = await fixture(GOLDEN_FIXTURES[0]);
+
+  const unfixed = marginInkFraction(processPhoto(photo, { clearMargin: false }).texture);
   assert.ok(
-    inkOutside / border < 0.01,
-    `${((inkOutside / border) * 100).toFixed(2)}% of the safe-area margin has ink in it — ` +
-      'the drawing is encroaching on the markers\' quiet zone',
+    unfixed > 0.001,
+    'the fixture no longer contains the printed guide box, so this test proves nothing',
   );
+
+  const fixed = marginInkFraction(processPhoto(photo).texture);
+  assert.equal(fixed, 0, `${(fixed * 100).toFixed(2)}% of the safe-area margin still has ink in it`);
 });
 
 // ── The failure path ───────────────────────────────────────────────────────

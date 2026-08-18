@@ -232,3 +232,11 @@ Append-only. Every agent adds a line when it finishes (or blocks): `date — wav
   import so the package entry point is browser-safe. (e) Fixtures are 1200×1600 PNGs (~1.4 MB
   each, 16 MB total): PNG cannot compress sensor noise, so photo size is a direct repo-size
   cost — real fixtures will be JPEGs and can be bigger.
+  (f) **Defect found and fixed while building the fixtures:** the printed dashed guide box
+  sits 10 mm *inside* the drawable quad, so it lands inside the texture — every dinosaur
+  would have worn a dashed rectangle. The pipeline now wipes everything outside
+  `TEXTURE_SAFE_AREA` (plus a 6 px overrun) as a canonical final step: that is exactly the
+  region the spec already reserves for template furniture, and the region WS-C's UV unwrap
+  already excludes. Solved geometrically rather than by tinting the guide, so it holds for
+  any printer. `rasterizeTemplate` now draws the guide too, so the golden suite covers it.
+  Consequence for WS-C / Wave 4: a stroke drawn outside the printed box is clipped, by design.

@@ -26,10 +26,12 @@ export {
 export { PipelineError, buildCornerDiagnostics } from './errors.js';
 export {
   cleanupLevels,
+  clearTemplateMargin,
   estimateIlluminationField,
   meanLuminance,
   sharpness,
   DEFAULT_LEVELS,
+  MARGIN_OVERRUN_PX,
   type LevelsOptions,
 } from './levels.js';
 export {
@@ -92,4 +94,4 @@ export {
   type TemplateOptions,
 } from './template.js';
 export { buildPdf, type PdfDocument, type PdfOp } from './pdf.js';
-export { rasterizeTemplate, type RasterImage } from './rasterize.js';
+export { rasterizeTemplate, type RasterImage, type RasterizeOptions } from './rasterize.js';
