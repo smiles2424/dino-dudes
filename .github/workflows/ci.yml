@@ -16,7 +16,9 @@ env:
 jobs:
   build-test-e2e:
     name: build · test · e2e
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/playwright:v1.49.1-noble
     timeout-minutes: 20
 
     steps:
@@ -36,28 +38,6 @@ jobs:
 
       - name: Build
         run: pnpm build
-
-      - name: Get Playwright version
-        id: playwright-version
-        run: echo "version=$(node -p "require('./e2e/package.json').devDependencies['@playwright/test']")" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Playwright browsers
-        id: playwright-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ env.NODE_VERSION }}-${{ steps.playwright-version.outputs.version }}
-          restore-keys: |
-            ${{ runner.os }}-playwright-${{ env.NODE_VERSION }}-
-            ${{ runner.os }}-playwright-
-
-      - name: Install Playwright browser
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: pnpm e2e:install
-
-      - name: Install Playwright OS dependencies only
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: pnpm --filter @dino/e2e exec playwright install-deps chromium
 
       - name: Module tests
         run: pnpm test
