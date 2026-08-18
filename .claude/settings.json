@@ -1,0 +1,5 @@
+{
+  "enabledPlugins": {
+    "upstash@upstash": true
+  }
+}
