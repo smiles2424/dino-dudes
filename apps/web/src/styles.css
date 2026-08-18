@@ -81,3 +81,76 @@ dd {
   font-size: 0.85rem;
   margin-bottom: 0;
 }
+
+/* ── 3D world (WS-C) ─────────────────────────────────────────────────────── */
+
+.debug-world {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+
+.world-frame {
+  position: relative;
+  flex: 1;
+  min-height: 20rem;
+  background: #cfe2f0;
+  overflow: hidden;
+}
+
+/* Screenshot mode: a fixed-size canvas pinned to the top-left, so the render
+   never depends on the browser window. */
+.debug-world--static {
+  display: block;
+}
+
+.debug-world--static .world-frame {
+  flex: none;
+  min-height: 0;
+}
+
+.nameplate {
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(16, 21, 27, 0.78);
+  border: 1px solid rgba(230, 237, 243, 0.35);
+  color: #e6edf3;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.debug-hud {
+  padding: 0.75rem 1rem 1.25rem;
+  font-size: 0.85rem;
+  border-top: 1px solid #263241;
+}
+
+.debug-hud h1 {
+  font-size: 0.95rem;
+  margin: 0 0 0.25rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #7d8fa1;
+}
+
+.debug-hud p {
+  margin: 0 0 0.5rem;
+  color: #9fb0c0;
+}
+
+.debug-hud ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.15rem;
+}
+
+.debug-hud em {
+  color: #7d8fa1;
+}
+
+.debug-hud code {
+  color: #48d597;
+}
