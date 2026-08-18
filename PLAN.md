@@ -57,21 +57,30 @@ A wave is complete only when ALL of:
 - [x] Directory tree, git repo on `main`, `.gitignore`
 - [x] `PLAN.md` (this file), `docs/ARCHITECTURE.md`
 - [x] `.env.example` + `.env` placeholders for Neon / Upstash secrets
-- **Human checkpoint:** review this plan; fill in `.env`. ⟵ **WE ARE HERE**
+- **Human checkpoint:** review this plan; fill in `.env`. ✅ done
 
-### Wave 1 — Contracts & foundations  `[ ] not started` *(1 opus agent, sequential)*
+### Wave 1 — Contracts & foundations  `[x] done` *(1 opus agent, sequential)*
 Branch: `wave-1/foundations`
-- [ ] pnpm workspaces + Turborepo tooling; TypeScript strict; root scripts: `dev`, `build`, `test`, `e2e`
-- [ ] `packages/shared`: Zod schemas for API + Colyseus room state; **Texture Spec** constants
+- [x] **FIRST: validate third-party connections before any other work.** Using the values in
+      `.env`, open a real connection to Neon (`SELECT 1` over `DATABASE_URL` and
+      `DATABASE_URL_UNPOOLED`) and Upstash (`PING` via `@upstash/redis` REST using
+      `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` — NOT ioredis/`REDIS_URL`; TCP
+      6379 is blackholed on this machine by ProtonVPN, see Progress Log 2026-08-18). If either
+      fails, troubleshoot up to ~3 attempts (obvious causes only: sslmode, quoting, token
+      copy-paste) — then **STOP the wave**, record the failure in the Progress Log, and report
+      back to the human. Do not proceed with any implementation work while validation is failing.
+- [x] pnpm workspaces + Turborepo tooling; TypeScript strict; root scripts: `dev`, `build`, `test`, `e2e`
+- [x] `packages/shared`: Zod schemas for API + Colyseus room state; **Texture Spec** constants
       (1024×1024 PNG, ArUco 4x4_50 dict, corner IDs 0–3, drawable-quad geometry)
-- [ ] `apps/server`: Fastify boot + `/healthz`; Colyseus attached (empty LobbyRoom); reads `.env`
-- [ ] `apps/web`: Vite React boot; renders "hello world" + server health status
-- [ ] Template generator v1 in `packages/pipeline`: emits printable SVG template with markers
+- [x] `apps/server`: Fastify boot + `/healthz`; Colyseus attached (empty LobbyRoom); reads `.env`
+- [x] `apps/web`: Vite React boot; renders "hello world" + server health status
+- [x] Template generator v1 in `packages/pipeline`: emits printable SVG template with markers
       (needed early so humans can print & draw while later waves run)
-- [ ] GitHub Actions CI: build + test + e2e on PR
-- [ ] **E2E #1 (Playwright):** web app loads, shows healthy server status
+- [x] GitHub Actions CI: build + test + e2e on PR
+- [x] **E2E #1 (Playwright):** web app loads, shows healthy server status
 - **Gate:** `pnpm build` clean; E2E #1 green in CI. No secrets required for this wave.
-- **Human checkpoint:** print a generated template, confirm it looks right on paper.
+- **Human checkpoint:** print a generated template (`assets/templates/template-trex.pdf`, or the
+  `.svg`), confirm it looks right on paper. ⟵ **WE ARE HERE**
 
 ### Wave 2 — Pipeline + 3D world  `[ ] not started` *(2 opus agents, concurrent, worktrees)*
 **Wave 2A — WS-A image pipeline** — branch `wave-2/pipeline`
@@ -103,7 +112,11 @@ Branch: `wave-3/backend`
       `GET /api/textures/:hash` (Redis cache → Postgres fallback, immutable cache headers)
 - [ ] Colyseus LobbyRoom: join-code rooms, synced player map `{id, name, modelSlug,
       textureHash}`, avatar-updated broadcast wired to Redis pub/sub
-- [ ] Upstash via ioredis (TCP/TLS URL): texture cache, presence
+- [ ] Upstash via a thin adapter module (`apps/server/src/redis.ts`, ~6 functions: texture
+      get/set, lobby member add/remove/list, publish) backed by `@upstash/redis` REST for v1.
+      Avatar-update fanout to Colyseus rooms is a direct in-process call (single process in
+      v1) — no cross-process pub/sub needed. The adapter keeps a later swap to ioredis
+      (needed only for multi-instance Colyseus presence in Wave 5) a one-file change.
 - [ ] **Integration test (@colyseus/testing):** client A joins lobby → POST fixture texture →
       client B's room state gets new hash → `GET /textures/:hash` bytes match upload
 - **Gate:** integration test green against real Neon + Upstash; cumulative E2E green.
@@ -137,7 +150,9 @@ Waves 1–2 run entirely without secrets.
 |---|---|---|
 | `DATABASE_URL` | Neon Postgres, pooled (app queries) | Neon console → connection string (pooled) |
 | `DATABASE_URL_UNPOOLED` | Neon direct (Drizzle migrations) | Neon console → direct connection |
-| `REDIS_URL` | Upstash Redis via TCP/TLS (`rediss://…`) — **not** the REST URL | Upstash console → Redis → "ioredis" tab |
+| `UPSTASH_REDIS_REST_URL` | Upstash REST endpoint (`https://<db>.upstash.io`) — v1 client | Upstash console → Redis → REST |
+| `UPSTASH_REDIS_REST_TOKEN` | Auth for the REST client (verified: equals the `rediss://` password) | Upstash console → Redis → REST |
+| `REDIS_URL` | Upstash via TCP/TLS (`rediss://…`) — kept for Wave 5 multi-instance; TCP 6379 is blocked on the dev machine by ProtonVPN | Upstash console → Redis → "ioredis" tab |
 | `SESSION_SECRET` | Signing lobby/player tokens | Generate: any 32+ char random string |
 
 ## Progress log
@@ -145,3 +160,46 @@ Waves 1–2 run entirely without secrets.
 Append-only. Every agent adds a line when it finishes (or blocks): `date — wave/module — result — notes`.
 
 - 2026-08-18 — Wave 0 / scaffold — done — repo initialized, plan written, awaiting human review + `.env` fill-in.
+- 2026-08-18 — Wave 1 / connection validation — **BLOCKED, wave stopped** — Neon OK (pooled +
+  unpooled both pass `SELECT 1`, Postgres 17.10). Upstash FAILS: TCP to
+  `pumped-vulture-135579.upstash.io:6379` connects, but the TLS handshake is reset mid-flight
+  (openssl: `write:errno=10054`, 0 bytes read after ClientHello); TLS to the same host on
+  port 443 succeeds with a valid `*.upstash.io` cert. Diagnosis: something on the local
+  network path (Windows Firewall / antivirus TLS filtering / ISP) blocks TLS on port 6379.
+  Not fixable from this machine's code. Needs human: allow outbound TLS on 6379, test from
+  another network, or check AV/firewall SSL-scanning settings. No implementation work started.
+- 2026-08-18 — Wave 1 / connection validation — **UNBLOCKED (Opus subagent deep-dive)** —
+  Root cause revised: NOT a TLS block. ProtonVPN (WireGuard, kill-switch enforced via WFP) is
+  the default route and its tunnel blackholes TCP to Upstash port 6379 entirely (port 6379
+  behaves identically to known-closed ports; `TcpTestSucceeded=True` is a false signal on
+  this box; local firewall/AV/proxy all exonerated). Both ioredis and node-redis fail — it's
+  the network, not the library. **Resolution: `@upstash/redis` REST over 443 works NOW** —
+  verified PING, SET/GET/DEL, SSE-based subscribe receiving a published message, and
+  byte-identical base64 round-trip of binary data. The `rediss://` password doubles as the
+  REST token. Decision: v1 uses `@upstash/redis` behind a thin adapter (Wave 3 bullet
+  updated); ioredis path revisited in Wave 5 on deploy hosts with open 6379. Optional human
+  check: disconnecting ProtonVPN should make ioredis work locally too.
+- 2026-08-18 — Wave 1 / connection validation — **PASS** — all three checks green via
+  `pnpm validate:connections` (`scripts/validate-connections.mjs`, now a permanent repo
+  script + CI step): Neon pooled `SELECT 1` PostgreSQL 17.10 (1.1 s cold), Neon unpooled
+  `SELECT 1` PostgreSQL 17.10 (0.3 s), Upstash REST `PING` → `PONG` (0.14 s).
+  **One `.env` fix was needed** (allowed copy-paste troubleshooting): the
+  `UPSTASH_REDIS_REST_TOKEN` line held the literal placeholder `PASSWORD` while the real
+  token sat on the following line with no `key=` prefix, so dotenv never saw it. Repaired
+  in the local (gitignored) `.env` only — no secret values were printed or committed. The
+  token does equal the `rediss://` password, as `.env.example` documents.
+- 2026-08-18 — Wave 1 / foundations — **done** — pnpm workspaces + Turborepo monorepo,
+  strict TS everywhere; `packages/shared` freezes the Texture Spec + API/Room Zod contracts;
+  `apps/server` = Fastify `/healthz` + Colyseus `LobbyRoom` (empty) sharing one http.Server,
+  Redis behind the `apps/server/src/redis.ts` adapter (`ping` only for now, Wave 3 grows it);
+  `apps/web` = Vite/React hello-world with live health polling; `packages/pipeline` template
+  generator v1 emits SVG **and** PDF for every model slug into `assets/templates/`; GitHub
+  Actions CI (build → test → soft-failing connection check → e2e); E2E #1 green.
+  `pnpm build` clean, `pnpm test` 17/17, `pnpm e2e` 2/2.
+  Notes for later waves: (a) pinned `pnpm.overrides["@colyseus/greeting-banner"]="^2.0.6"` —
+  `@colyseus/core@0.16.25` publishes that dep as `workspace:^`, which no non-Colyseus
+  install can resolve; drop the override once upstream fixes it. (b) Colyseus state uses
+  `defineTypes` rather than `@type` decorators, so no decorator compiler flags are needed.
+  (c) The Texture Spec adds a **10 mm / 64 px safe-area inset** inside the drawable quad
+  (printed as the dashed "draw inside this box"), so drawings can't invade a marker's quiet
+  zone — WS-C's UV unwrap must stay inside `TEXTURE_SAFE_AREA`.
