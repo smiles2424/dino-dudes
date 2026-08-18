@@ -1,0 +1,22 @@
+# secrets
+.env
+.env.local
+.env.*.local
+
+# dependencies & build output
+node_modules/
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+
+# test artifacts
+playwright-report/
+test-results/
+coverage/
+
+# editor/os noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
