@@ -8,21 +8,32 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsx watch src/index.ts",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "test": "tsc -p tsconfig.json && node --test test/data-layer.test.mjs test/rest-api.test.mjs test/lobby-room.test.mjs",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
     "@colyseus/schema": "^3.0.0",
     "@colyseus/ws-transport": "^0.16.0",
     "@dino/shared": "workspace:*",
     "@fastify/cors": "^10.0.1",
+    "@fastify/multipart": "^10.1.1",
     "@upstash/redis": "^1.34.3",
     "colyseus": "^0.16.0",
     "dotenv": "^16.4.7",
+    "drizzle-orm": "^0.45.2",
     "fastify": "^5.2.0",
+    "pg": "^8.23.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@colyseus/testing": "^0.16.3",
     "@types/node": "^22.10.2",
+    "@types/pg": "^8.23.1",
+    "colyseus.js": "^0.16.22",
+    "drizzle-kit": "^0.31.10",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }

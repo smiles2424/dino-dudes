@@ -12,10 +12,24 @@
  * drift between server and client fails loudly instead of silently.
  */
 import { z } from 'zod';
-import { ModelSlugSchema, PlayerIdSchema, PlayerNameSchema, TextureHashSchema } from './api.js';
+import {
+  LobbyCodeSchema,
+  ModelSlugSchema,
+  PlayerIdSchema,
+  PlayerNameSchema,
+  TextureHashSchema,
+} from './api.js';
 
 /** Colyseus room name used by `gameServer.define()` and `client.joinById`/`joinOrCreate`. */
 export const LOBBY_ROOM_NAME = 'lobby';
+
+/**
+ * Matchmaking filter — **one room per lobby code**. Added Wave 3 Chunk 3.3
+ * (additive). `gameServer.define(LOBBY_ROOM_NAME, LobbyRoom).filterBy([...])`
+ * on the server; clients therefore reach their lobby with
+ * `joinOrCreate(LOBBY_ROOM_NAME, { code })` and never need a Colyseus room id.
+ */
+export const LOBBY_ROOM_FILTER: readonly string[] = ['code'];
 
 /** A dino's position/heading in the shared world. Metres, radians, Y-up. */
 export const Vec3Schema = z.object({
@@ -55,6 +69,43 @@ export const JoinLobbyOptionsSchema = z.object({
   playerId: PlayerIdSchema.optional(),
 });
 export type JoinLobbyOptions = z.infer<typeof JoinLobbyOptionsSchema>;
+
+/**
+ * The options actually put on the wire by `joinOrCreate(LOBBY_ROOM_NAME, …)`.
+ * Added Wave 3 Chunk 3.3 (**additive** — {@link JoinLobbyOptionsSchema} is
+ * untouched and still describes an uploader's identity fields).
+ *
+ * `code` is required because it is the matchmaking filter. Everything else is
+ * optional so a **spectator** (the projector view, or a phone that has not
+ * drawn yet) can join with `{ code }` alone: it watches the world and gets no
+ * entry in `players`. A client that supplies a `name` is a participant and is
+ * added to the synchronized player map.
+ */
+export const LobbyJoinOptionsSchema = z.object({
+  code: LobbyCodeSchema,
+  name: PlayerNameSchema.optional(),
+  modelSlug: ModelSlugSchema.optional(),
+  /** Set once the player exists in Postgres (e.g. after `POST /api/avatars`). */
+  playerId: PlayerIdSchema.optional(),
+  /** Explicit opt-out of being rendered, even when a `name` is supplied. */
+  spectator: z.boolean().optional(),
+});
+export type LobbyJoinOptions = z.infer<typeof LobbyJoinOptionsSchema>;
+
+/**
+ * Structured reasons a join can be refused, sent as the Colyseus `ServerError`
+ * code (`err.code` on the client). Deliberately outside Colyseus's own reserved
+ * 42xx range. Added Wave 3 Chunk 3.3 (additive).
+ */
+export const ROOM_ERROR_CODES = {
+  /** Options failed {@link LobbyJoinOptionsSchema}. */
+  invalidJoinOptions: 4000,
+  /** No lobby with that code exists in Postgres. */
+  lobbyNotFound: 4040,
+  /** The lobby exists but has been closed. */
+  lobbyClosed: 4090,
+} as const;
+export type RoomErrorCode = (typeof ROOM_ERROR_CODES)[keyof typeof ROOM_ERROR_CODES];
 
 // ── Messages ───────────────────────────────────────────────────────────────
 
