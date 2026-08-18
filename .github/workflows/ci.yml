@@ -37,6 +37,9 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Install Playwright browser
+        run: pnpm --filter @dino/e2e exec playwright install --with-deps
+
       - name: Module tests
         run: pnpm test
 
@@ -52,9 +55,6 @@ jobs:
           UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
           UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
         run: pnpm validate:connections
-
-      - name: Install Playwright browser
-        run: pnpm --filter @dino/e2e exec playwright install --with-deps
 
       - name: E2E
         env:
