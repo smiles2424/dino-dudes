@@ -27,6 +27,13 @@ export interface WorldViewProps {
   /** Whether the caller has finished loading the state (drives `ready`). */
   stateLoaded?: boolean;
   className?: string;
+  /**
+   * Camera override (added Chunk 4.2 for the capture flow's single-dino
+   * preview, which needs a close-up). Both default to the wide projector shot
+   * `/play` and `/debug/world` use, so the screenshot baseline is untouched.
+   */
+  cameraPosition?: readonly [number, number, number];
+  cameraTarget?: readonly [number, number, number];
 }
 
 const CAMERA_POSITION: [number, number, number] = [0.6, 3.6, 11.5];
@@ -51,6 +58,8 @@ export function WorldView({
   frozen = false,
   stateLoaded = true,
   className,
+  cameraPosition = CAMERA_POSITION,
+  cameraTarget = CAMERA_TARGET,
 }: WorldViewProps): JSX.Element {
   return (
     <Canvas
@@ -63,7 +72,7 @@ export function WorldView({
         preserveDrawingBuffer: frozen,
         powerPreference: 'default',
       }}
-      camera={{ position: CAMERA_POSITION, fov: 42, near: 0.1, far: 600 }}
+      camera={{ position: [...cameraPosition], fov: 42, near: 0.1, far: 600 }}
       data-testid="world-canvas"
     >
       <WorldScene
@@ -71,6 +80,8 @@ export function WorldView({
         resolveTextureUrl={resolveTextureUrl}
         frozen={frozen}
         stateLoaded={stateLoaded}
+        cameraPosition={cameraPosition}
+        cameraTarget={cameraTarget}
       />
     </Canvas>
   );
@@ -81,16 +92,20 @@ function WorldScene({
   resolveTextureUrl,
   frozen,
   stateLoaded,
+  cameraPosition,
+  cameraTarget,
 }: Required<Omit<WorldViewProps, 'className'>>): JSX.Element {
   const camera = useThree((state) => state.camera);
   const sky = useMemo(() => makeGradientTexture([236, 240, 226], [110, 168, 224]), []);
   const ground = useMemo(() => makeCheckerTexture([116, 152, 74], [104, 140, 68], 60), []);
+  const [camX, camY, camZ] = cameraPosition;
+  const [targetX, targetY, targetZ] = cameraTarget;
 
   useLayoutEffect(() => {
-    camera.position.set(...CAMERA_POSITION);
-    camera.lookAt(...CAMERA_TARGET);
+    camera.position.set(camX, camY, camZ);
+    camera.lookAt(targetX, targetY, targetZ);
     camera.updateProjectionMatrix();
-  }, [camera]);
+  }, [camera, camX, camY, camZ, targetX, targetY, targetZ]);
 
   useEffect(() => {
     worldDebug.frozen = frozen;
@@ -132,7 +147,7 @@ function WorldScene({
 
       {!frozen && (
         <OrbitControls
-          target={CAMERA_TARGET}
+          target={[targetX, targetY, targetZ]}
           enablePan={false}
           enableDamping={false}
           minDistance={4}

@@ -1,6 +1,19 @@
-import { useEffect, useMemo, useState } from 'react';
-import { LobbyCodeSchema, TEXTURE, TEXTURE_SPEC } from '@dino/shared';
+/**
+ * `/` — the phone's entry point.
+ *
+ * Chunk 4.2 turned this from a hello-world into the **capture flow** (see
+ * `./capture/CapturePage.tsx`); what is left here is the frame around it: the
+ * title, the live server-health readout that E2E #1 has asserted since Wave 1,
+ * and the links to the other two entry points.
+ *
+ * The health card stays deliberately: at a school event with a projector, one
+ * phone that can say "the server is unreachable" is worth the two lines of
+ * markup, and it is the only end-to-end proof the web build is talking to the
+ * API it was built against.
+ */
+import { useEffect, useState } from 'react';
 import { API_BASE, fetchHealth } from './api.js';
+import { CapturePage } from './capture/CapturePage.js';
 import type { Health } from '@dino/shared';
 
 type Status = 'checking' | 'healthy' | 'degraded' | 'unreachable';
@@ -18,7 +31,6 @@ export function App(): JSX.Element {
   const [status, setStatus] = useState<Status>('checking');
   const [health, setHealth] = useState<Health | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const lobbyCode = useMemo(readLobbyCode, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -55,20 +67,19 @@ export function App(): JSX.Element {
         Draw on paper, photograph it, watch your dinosaur walk into the shared world.
       </p>
 
-      <section className="card" data-testid="server-health" data-status={status}>
-        <h2>Server</h2>
-        <p className="status-line">
-          Status: <strong data-testid="server-status">{LABEL[status]}</strong>
-        </p>
+      <CapturePage />
+
+      <details className="card server-card" data-testid="server-health" data-status={status}>
+        <summary className="status-line">
+          Server: <strong data-testid="server-status">{LABEL[status]}</strong>
+        </summary>
         <dl>
           <dt>API</dt>
           <dd data-testid="api-base">{API_BASE}</dd>
           <dt>Version</dt>
           <dd data-testid="server-version">{health?.version ?? '—'}</dd>
           <dt>Uptime</dt>
-          <dd data-testid="server-uptime">
-            {health ? `${health.uptimeSeconds}s` : '—'}
-          </dd>
+          <dd data-testid="server-uptime">{health ? `${health.uptimeSeconds}s` : '—'}</dd>
           <dt>Redis</dt>
           <dd data-testid="check-redis">{describeCheck(health?.checks.redis)}</dd>
           <dt>Postgres</dt>
@@ -79,58 +90,18 @@ export function App(): JSX.Element {
             {error}
           </p>
         ) : null}
-      </section>
-
-      {/*
-        A lobby join link (`/?lobby=CODE`, the shape `POST /api/lobbies` hands
-        out and the projector's QR code encodes) lands here. Chunk 4.2 turns
-        this into the capture flow; for now it just forwards to the game view.
-      */}
-      {lobbyCode ? (
-        <section className="card" data-testid="lobby-invite">
-          <h2>
-            Lobby <strong data-testid="invite-code">{lobbyCode}</strong>
-          </h2>
-          <p>
-            <a href={`/play?lobby=${lobbyCode}`} data-testid="invite-watch-link">
-              Open the game view
-            </a>
-          </p>
-        </section>
-      ) : null}
-
-      <section className="card">
-        <h2>3D world</h2>
-        <p>
-          <a href="/debug/world" data-testid="world-link">
-            Open the world harness
-          </a>{' '}
-          — four low-poly dinos wearing test drawings, no backend required.
-        </p>
-        <p>
+        <p className="server-links">
           <a href="/play" data-testid="play-link">
-            Open the game view
+            Game view
           </a>{' '}
-          — a live lobby on the projector screen.
+          ·{' '}
+          <a href="/debug/world" data-testid="world-link">
+            World harness
+          </a>
         </p>
-      </section>
-
-      <section className="card">
-        <h2>Texture spec v{TEXTURE_SPEC.version}</h2>
-        <p>
-          {TEXTURE.width}×{TEXTURE.height} PNG · ArUco {TEXTURE_SPEC.markers.dictionary} · corner
-          IDs {TEXTURE_SPEC.markers.order.join(', ')}
-        </p>
-      </section>
+      </details>
     </main>
   );
-}
-
-/** The lobby code from a `/?lobby=CODE` join link, if it is a valid one. */
-function readLobbyCode(): string | null {
-  const raw = new URLSearchParams(window.location.search).get('lobby') ?? '';
-  const parsed = LobbyCodeSchema.safeParse(raw);
-  return parsed.success ? parsed.data : null;
 }
 
 function describeCheck(value: boolean | null | undefined): string {

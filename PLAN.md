@@ -155,11 +155,11 @@ build + `pnpm test --force` + cumulative `pnpm e2e` before the next launches.
 - [x] QR code on the game view encoding the lobby join URL for projector screens
 
 **Chunk 4.2 — capture flow UX** *(1 opus agent)*
-- [ ] Flow: name + lobby code (URL-prefilled) → pick dino → `<input capture>` photo →
+- [x] Flow: name + lobby code (URL-prefilled) → pick dino → `<input capture>` photo →
       `processPhoto` in-browser → preview drawing ON the 3D model → confirm/retake →
       upload → land in game view
-- [ ] Error UX: per-corner marker hints from `PipelineError`, blur warning, retake loop
-- [ ] **E2E #4:** capture flow with a fixture photo file through the real pipeline in-browser
+- [x] Error UX: per-corner marker hints from `PipelineError`, blur warning, retake loop
+- [x] **E2E #4:** capture flow with a fixture photo file through the real pipeline in-browser
       → upload → lands in game view (single browser, real server)
 
 **Chunk 4.3 — flagship E2E** *(1 opus agent)*
@@ -475,3 +475,66 @@ Append-only. Every agent adds a line when it finishes (or blocks): `date — wav
   **Known litter:** E2E #3 has no DB client, so its lobby/player/avatar rows stay in Neon;
   they are tagged `e2e-<8 hex>` (lobby name `e2e <id>`) and Chunk 4.3 should decide whether the
   browser suite gets a cleanup path.
+- 2026-08-18 — Wave 4 / Chunk 4.2 mobile capture flow — **done** — branch `wave-4/integration`.
+  *(Implemented by one agent that was killed by a network error just before it wrote this line;
+  a resume agent verified the whole thing from scratch and landed it. No implementation was
+  redone — the inherited work was complete and needed no fixes.)* **`/` is now the capture
+  flow** (`apps/web/src/capture/`): a four-step, one-question-per-screen mobile form —
+  details (name + lobby code, prefilled from `?lobby=CODE`, validated locally then against
+  `GET /api/lobbies/:code` *before* anyone draws) → dino picker (`DinoSilhouette.tsx`, the same
+  outline the printed template carries) → `<input type="file" capture="environment">` →
+  preview → confirm → `POST /api/avatars` → `window.location.assign('/play?lobby&name&model&
+  playerId')`. **The pipeline runs in the browser**: `capture/photo.ts` decodes the camera file,
+  downscales to a 1600 px long edge (marker detection gains nothing above it, and cost scales
+  with pixel count), calls the isomorphic `processPhoto` from `@dino/pipeline` on the main
+  thread behind a spinner, and encodes the canonical 1024² PNG via `OffscreenCanvas`; the
+  server only ever sees a finished texture. **Never import `@dino/pipeline/node` from the web
+  app** — that subpath pulls in `node:zlib`. Measured in E2E #4 on this machine:
+  **`processPhoto` 1073 ms, 1351 ms wall clock** including decode + PNG encode; confirm →
+  dino on the game view 10.7 s (dominated by a cold second page load, not the upload).
+  **Preview is the real renderer:** `capture/PreviewStage.tsx` feeds `<WorldView>` a one-entry
+  `PlayerState[]` (id `capture-preview`) and a `resolveTextureUrl` returning the blob URL of
+  the PNG about to be POSTed — same geometry, same unwrap, same bytes as the projector, no
+  round trip. `WorldView` gained optional `cameraPosition`/`cameraTarget` props (defaulting to
+  the wide projector shot, so E2E #2's screenshot baseline is untouched) because a phone needs
+  a close-up. **Error UX:** a `PipelineError` becomes a four-entry per-corner diagnostic —
+  every corner is listed, found ones included, which is what turns "it didn't work" into
+  "three of four; move your thumb off the bottom-left square" — and the retake control is the
+  *same* file input (its value is cleared on change so re-picking the same file still fires).
+  `blurry`/`too_far` are advisory only and never block. `api.ts` gained `ApiClientError`
+  (frozen `ApiErrorCode` + status, `null` when the server never answered), `fetchLobby` and
+  `uploadAvatar`, each mapping statuses to a sentence a nine-year-old can act on.
+  **Two server-side changes 4.3 must know about.** (a) The `lobby_members` + latest-avatar
+  query moved out of `routes/lobbies.ts` into **`apps/server/src/lobby-members.ts`**
+  (`loadLobbyMembers`), because `LobbyRoom.onCreate` now `await`s it to **hydrate a fresh room
+  from Postgres**: a room is `autoDispose`d the moment it empties, so the first person to draw
+  uploads over plain HTTP with *no room alive*, then opens `/play` and creates a brand-new one
+  — without hydration they walk into an empty field missing their own dinosaur. Hydrated
+  entries are keyed by `playerId` and `onJoin` re-keys them onto the `sessionId`, so nobody is
+  ever cloned; members with no drawing are skipped; a read failure warns and yields an emptier
+  world rather than an unjoinable lobby. `GET /api/lobbies/:code` returns byte-identical
+  output. (b) `POST /api/avatars` changed its texture-hash conflict action from
+  `onConflictDoNothing` to **`onConflictDoUpdate`** (claim `player_id`/`model_slug`): the
+  avatars row is both the blob *and* the record of who wears it, so `doNothing` left a
+  duplicate-texture uploader with no avatar row — invisible in `GET /api/lobbies/:code` and,
+  now, absent from a hydrated room. **The last uploader of a given set of pixels owns them**,
+  so `avatar.playerId` is now always the current uploader rather than the original one. Two
+  children never draw byte-identical pictures; a fixture uploaded twice does, which is why
+  4.3's two browsers must use **distinct** texture bytes per player or the second will steal
+  the first's row. `App.tsx` demoted the Wave 1 health card to a collapsed `<details>` (E2E #1
+  asserts text, not visibility, and still passes) and dropped the placeholder invite/spec
+  cards. **Gate:** `pnpm build` 4/4 · `pnpm test --force` **67/67** (shared 14, server 21,
+  pipeline 32), 6/6 tasks · `pnpm e2e` **11 tests, 10 passed**. E2E #4
+  (`e2e/tests/04-capture-flow.spec.ts`, **3 tests**, 390×844 viewport) drives the occluded
+  fixture `photo-11-occluded.png` → asserts the per-corner retake UI and that the flow did not
+  advance → retakes with `photo-01-flat.png` → asserts the texture is on the 3D model *before*
+  upload → confirms → asserts the dino wearing that exact hash on `/play`. Verified it skips
+  cleanly with no `.env`: **9 passed, 2 skipped, exit 0**. **The one E2E failure is
+  pre-existing and not from this chunk:** E2E #3's `upload → projector < 5000 ms` budget
+  measured 5362 ms — but stashing all of 4.2 and re-running at `83b7963` gave **8307 ms and
+  5823 ms**, i.e. *worse*, so this is Neon/Upstash round-trip latency from this machine today
+  (4.1 recorded ~1.5 s), not a regression. Hydration cannot be the cause either: E2E #3's room
+  is created when the projector connects, before the measured window opens. **Chunk 4.3 should
+  decide whether that budget is measuring the right thing** — `elapsed` spans the POST *plus*
+  the fan-out wait while the inner `waitForFunction` gets the full 5 s on its own, so a slow
+  upload can bust the assertion even when fan-out was instant.

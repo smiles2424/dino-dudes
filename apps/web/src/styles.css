@@ -301,3 +301,302 @@ button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
 }
+
+/* ── Capture flow (Wave 4, Chunk 4.2) ─────────────────────────────────────
+   Mobile-first and thumb-first: one question per card, nothing interactive
+   under 3 rem tall, and no horizontal scrolling at 320 px. */
+
+.capture {
+  display: block;
+}
+
+.capture-card {
+  padding: 1.1rem 1.1rem 1.25rem;
+}
+
+.capture-card h2 {
+  color: #e6edf3;
+  font-size: 1.15rem;
+  text-transform: none;
+  letter-spacing: 0;
+  margin-bottom: 0.75rem;
+}
+
+.capture-steps {
+  display: flex;
+  gap: 0.5rem;
+  list-style: none;
+  margin: 1.5rem 0 0;
+  padding: 0;
+}
+
+.capture-steps li {
+  flex: 1;
+  height: 0.35rem;
+  border-radius: 999px;
+  background: #263241;
+  font-size: 0;
+  color: transparent;
+}
+
+.capture-steps li[data-state='current'] {
+  background: #58a6ff;
+}
+.capture-steps li[data-state='done'] {
+  background: #48d597;
+}
+
+.field {
+  display: block;
+  margin-bottom: 1rem;
+}
+
+.field > span {
+  display: block;
+  font-size: 0.85rem;
+  color: #9fb0c0;
+  margin-bottom: 0.3rem;
+}
+
+.field input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 3rem;
+  font-size: 1.05rem;
+}
+
+.field small {
+  display: block;
+  margin-top: 0.35rem;
+  color: #7d8fa1;
+  font-size: 0.8rem;
+}
+
+.code-input {
+  text-transform: uppercase;
+  letter-spacing: 0.35em;
+  font-size: 1.5rem !important;
+  text-align: center;
+}
+
+.hint {
+  color: #9fb0c0;
+  font-size: 0.9rem;
+  margin-top: 0;
+}
+
+button.big {
+  width: 100%;
+  min-height: 3.25rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  background: #1f6feb;
+  border-color: #1f6feb;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+button.ghost {
+  min-height: 3rem;
+  padding-inline: 1rem;
+  background: transparent;
+  color: #9fb0c0;
+}
+
+.capture-actions {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  margin-top: 1rem;
+}
+
+.capture-actions .big {
+  flex: 1;
+}
+
+/* Dino picker */
+
+.model-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.model-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.7rem 0.4rem;
+  min-height: 8rem;
+  background: #10151b;
+  border: 2px solid #263241;
+  font-size: 0.9rem;
+}
+
+.model-option.is-selected {
+  border-color: #58a6ff;
+  background: #16243a;
+}
+
+.dino-silhouette {
+  fill: #9fb0c0;
+}
+
+.model-option.is-selected .dino-silhouette {
+  fill: #cfe6ff;
+}
+
+/* Photo step */
+
+.photo-button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 4rem;
+  border-radius: 0.6rem;
+  border: 2px dashed #35506b;
+  background: #16243a;
+  color: #e6edf3;
+  font-size: 1.05rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.photo-button.is-busy {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+/* The real control covers the whole label at zero opacity rather than being
+   shrunk to 1 px: it keeps a real hit area (and a real bounding box, which is
+   what makes it drivable) while the label supplies the appearance. */
+.photo-button input[type='file'] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.processing {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.9rem 0 0;
+  color: #9fb0c0;
+}
+
+.spinner {
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  border: 2px solid rgba(230, 237, 243, 0.25);
+  border-top-color: #e6edf3;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 3s;
+  }
+}
+
+/* Retake hints */
+
+.corner-hints {
+  margin-top: 1rem;
+}
+
+.corner-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem;
+  list-style: none;
+  margin: 0.75rem 0;
+  padding: 0;
+}
+
+.corner-grid li {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 0.6rem;
+  border-radius: 0.4rem;
+  border: 1px solid #263241;
+  font-size: 0.85rem;
+}
+
+.corner-grid li[data-found='true'] {
+  color: #48d597;
+  border-color: rgba(72, 213, 151, 0.4);
+}
+
+.corner-grid li[data-found='false'] {
+  color: #f2685f;
+  border-color: rgba(242, 104, 95, 0.5);
+  background: rgba(242, 104, 95, 0.08);
+}
+
+.corner-hint-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: #e6edf3;
+  font-size: 0.9rem;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.warning {
+  margin: 0.75rem 0 0;
+  padding: 0.6rem 0.7rem;
+  border-radius: 0.4rem;
+  background: rgba(232, 182, 76, 0.12);
+  border: 1px solid rgba(232, 182, 76, 0.4);
+  color: #e8b64c;
+  font-size: 0.88rem;
+}
+
+/* Preview */
+
+.preview-stage {
+  position: relative;
+  height: 18rem;
+  border-radius: 0.6rem;
+  overflow: hidden;
+  background: #cfe2f0;
+}
+
+.capture-meta {
+  margin: 0.9rem 0 0;
+  font-size: 0.7rem;
+  color: #56687a;
+  overflow-wrap: anywhere;
+}
+
+/* Server card, now a footer detail rather than the main event. */
+
+.server-card {
+  font-size: 0.85rem;
+}
+
+.server-card summary {
+  cursor: pointer;
+  list-style: revert;
+}
+
+.server-links {
+  margin: 0.75rem 0 0;
+}

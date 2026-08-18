@@ -38,6 +38,7 @@ import {
   type LobbyJoinOptions,
 } from '@dino/shared';
 import { db, hasDatabase, lobbies, lobbyMembers, players } from '../db.js';
+import { loadLobbyMembers } from '../lobby-members.js';
 import { redis } from '../redis.js';
 
 // ── Synchronized state ─────────────────────────────────────────────────────
@@ -221,9 +222,49 @@ export class LobbyRoom extends Room<LobbyState> {
       player.heading = msg.data.heading;
     });
 
+    // Everyone who already drew, before this room existed (Chunk 4.2).
+    await this.#hydrateFromDatabase();
+
     const existing = roomsByCode.get(code);
     if (existing) existing.add(this);
     else roomsByCode.set(code, new Set([this]));
+  }
+
+  /**
+   * Seed the world from Postgres with the lobby members who already have a
+   * drawing, as offline entries keyed by `playerId`.
+   *
+   * A room is disposed the moment it empties, so "the room for lobby ABCDE"
+   * is not a durable thing — the first person to draw uploads over plain HTTP
+   * with no room alive to fan out to, and then opens the game view, creating
+   * a brand-new one. Without this, they would walk into an empty field and
+   * their own dinosaur would be missing. `onJoin` re-keys these entries onto
+   * a sessionId when their owner connects, so nobody is ever cloned.
+   *
+   * Members with no drawing are deliberately skipped: a nameplate on a blank
+   * dino for someone who is not even connected is clutter on the projector.
+   */
+  async #hydrateFromDatabase(): Promise<void> {
+    if (!this.#lobbyId) return;
+    try {
+      for (const member of await loadLobbyMembers(this.#lobbyId)) {
+        if (!member.textureHash) continue;
+        const player = new PlayerState();
+        player.id = member.playerId;
+        player.name = member.name;
+        player.modelSlug = member.modelSlug ?? 'trex';
+        player.textureHash = member.textureHash;
+        const spawn = spawnFor(member.playerId);
+        player.position.x = spawn.position.x;
+        player.position.y = spawn.position.y;
+        player.position.z = spawn.position.z;
+        player.heading = spawn.heading;
+        this.state.players.set(member.playerId, player);
+      }
+    } catch (err) {
+      // A read failure means an emptier world, never a lobby nobody can join.
+      console.warn('[lobby] hydrate failed:', err instanceof Error ? err.message : err);
+    }
   }
 
   /** The lobby code, available even if `onCreate` threw before setting state. */

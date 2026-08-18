@@ -93,6 +93,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@dino/pipeline':
+        specifier: workspace:*
+        version: link:../../packages/pipeline
       '@dino/shared':
         specifier: workspace:*
         version: link:../../packages/shared
