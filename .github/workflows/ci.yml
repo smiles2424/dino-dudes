@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  build-test-e2e:
+    name: build · test · e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Module tests
+        run: pnpm test
+
+      # Third-party reachability. Secrets are optional so that forked PRs (which
+      # cannot read repository secrets) still get a full green build: the script
+      # exits 0 with a SKIP line when the vars are absent, and fails hard when
+      # they are present but unreachable.
+      - name: Validate third-party connections (skipped without secrets)
+        env:
+          VALIDATE_SOFT_FAIL: '1'
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+        run: pnpm validate:connections
+
+      - name: Install Playwright browser
+        run: pnpm --filter @dino/e2e exec playwright install --with-deps chromium
+
+      - name: E2E
+        env:
+          CI: 'true'
+        run: pnpm e2e:only
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Upload generated templates
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: templates
+          path: assets/templates/
+          retention-days: 7
+          if-no-files-found: ignore
