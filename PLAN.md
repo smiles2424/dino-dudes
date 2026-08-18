@@ -94,13 +94,13 @@ Branch: `wave-1/foundations`
   filled template; re-approve goldens.
 
 **Wave 2B — WS-C 3D world** — branch `wave-2/world`
-- [ ] Low-poly dino GLB(s) with planar side-projection UV unwrap matching the Texture Spec
+- [x] Low-poly dino GLB(s) with planar side-projection UV unwrap matching the Texture Spec
       (procedural/three-geometry authoring is fine for v1 if no Blender asset available)
-- [ ] r3f scene: ground, sky, lighting; dinos from state; nameplates; idle/wander motion
-- [ ] Runtime texture swap by URL/hash without model reload
-- [ ] `/debug/world` harness page: renders scene from static JSON + local texture files;
+- [x] r3f scene: ground, sky, lighting; dinos from state; nameplates; idle/wander motion
+- [x] Runtime texture swap by URL/hash without model reload
+- [x] `/debug/world` harness page: renders scene from static JSON + local texture files;
       exposes `window.__world` (dino count, applied texture hashes) for test assertions
-- [ ] **E2E #2 (Playwright):** harness loads 3 textures, `window.__world` correct, canvas
+- [x] **E2E #2 (Playwright):** harness loads 3 textures, `window.__world` correct, canvas
       screenshot-diff within tolerance
 - **Gate (whole wave):** both modules' tests + cumulative E2E (#1, #2) green after merge of both branches.
 - **Human checkpoint:** art review — does a test drawing look right on the dino?
@@ -240,3 +240,31 @@ Append-only. Every agent adds a line when it finishes (or blocks): `date — wav
   already excludes. Solved geometrically rather than by tinting the guide, so it holds for
   any printer. `rasterizeTemplate` now draws the guide too, so the golden suite covers it.
   Consequence for WS-C / Wave 4: a stroke drawn outside the printed box is clipped, by design.
+- 2026-08-18 — Wave 2B / WS-C 3D world — **done** — branch `wave-2/world`. Four low-poly dinos
+  (trex/stego/raptor/bronto) are **procedural three.js geometry** (allowed v1 alternative to a
+  GLB — `assets/models/` stays empty): the box lists + the unwrap live in the new additive
+  `packages/shared/src/dino-models.ts` so WS-A can print a matching outline guide
+  (`dinoTextureOutline(slug)` returns the silhouette in texture pixels). **Unwrap for WS-A:**
+  mirrored planar side projection along Z, with the animal's side-view bbox stretched to fill
+  `TEXTURE_SAFE_AREA` exactly — drawing's LEFT edge → tail tip, RIGHT edge → snout, TOP edge →
+  spine/head-top, BOTTOM edge → soles; both flanks share the UVs (the far side reads mirrored,
+  head-on-head). r3f+drei scene (`apps/web/src/world/`): gradient sky dome, checkered ground,
+  fake contact shadows, trees, DOM nameplates (drei `<Html>` — deliberately NOT in-canvas text,
+  so OS fonts can't move a pixel of the screenshot), seeded wander motion (no `Math.random`).
+  `/debug/world` ships in production and renders from `apps/web/public/debug/world.json` +
+  local PNGs; `?static=1` freezes t=0, pins DPR 1, disables AA and fixes the canvas at 800×500;
+  `window.__world` = `{version, ready, frozen, dinoCount, appliedTextures, textureStatus,
+  pendingTextures, textureErrors, geometryBuilds, materialBuilds, frames, setTexture()}`.
+  Test fixtures are generated (never hand-edited) by
+  `node apps/web/scripts/generate-debug-textures.mjs`. E2E #2 (`e2e/tests/02-world.spec.ts`,
+  4 tests) asserts dinoCount/appliedTextures, nameplates, live-vs-frozen motion, a hot texture
+  swap that leaves `geometryBuilds`/`materialBuilds` unchanged, and a canvas screenshot vs
+  `e2e/tests/__screenshots__/02-world.spec.ts/world-static.png` (SwiftShader forced,
+  `maxDiffPixelRatio: 0.05`). `pnpm build` clean, `pnpm test` 22/22 node + 6/6 Playwright,
+  `pnpm e2e` 6/6 (E2E #1 untouched). Notes: (a) `playwright.config.ts` gained
+  `snapshotPathTemplate` without `{platform}` so ONE baseline serves Windows and CI's Linux —
+  recorded on Windows; if CI ever exceeds the 5 % tolerance, re-record with
+  `pnpm e2e:only -- --update-snapshots` rather than loosening it. (b) `@dino/shared`'s test
+  script now lists both test files. (c) `e2e/tsconfig.json` gained the `DOM` lib so
+  `page.evaluate` callbacks type-check. (d) Bundle is ~1 MB (three+drei) — code-split later if
+  it matters.

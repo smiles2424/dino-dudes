@@ -9,3 +9,5 @@ export * from './api.js';
 export * from './room.js';
 // Added in Wave 2A (additive): what `@dino/pipeline` returns / throws.
 export * from './pipeline.js';
+// Added by Wave 2B (WS-C): low-poly dino box data + the side-projection unwrap.
+export * from './dino-models.js';

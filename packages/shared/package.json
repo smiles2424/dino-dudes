@@ -15,7 +15,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsc -p tsconfig.json && node --test test/contracts.test.mjs"
+    "test": "tsc -p tsconfig.json && node --test test/contracts.test.mjs test/dino-models.test.mjs"
   },
   "dependencies": {
     "zod": "^3.24.1"

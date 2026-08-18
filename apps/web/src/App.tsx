@@ -81,6 +81,16 @@ export function App(): JSX.Element {
       </section>
 
       <section className="card">
+        <h2>3D world</h2>
+        <p>
+          <a href="/debug/world" data-testid="world-link">
+            Open the world harness
+          </a>{' '}
+          — four low-poly dinos wearing test drawings, no backend required.
+        </p>
+      </section>
+
+      <section className="card">
         <h2>Texture spec v{TEXTURE_SPEC.version}</h2>
         <p>
           {TEXTURE.width}×{TEXTURE.height} PNG · ArUco {TEXTURE_SPEC.markers.dictionary} · corner
