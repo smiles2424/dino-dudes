@@ -114,13 +114,13 @@ Wave 2: ~30-minute agent runs are too long; chunks below target well under that,
 its own gate (build + module tests + cumulative `pnpm e2e` green) before the next launches.*
 
 **Chunk 3.1 — data layer** *(1 opus agent)*
-- [ ] Drizzle schema + migrations applied to Neon (players, avatars, lobbies, lobby_members —
+- [x] Drizzle schema + migrations applied to Neon (players, avatars, lobbies, lobby_members —
       SQL in docs/ARCHITECTURE.md); `apps/server/src/db.ts`
-- [ ] Flesh out `apps/server/src/redis.ts` adapter (~6 functions: texture get/set, lobby
+- [x] Flesh out `apps/server/src/redis.ts` adapter (~6 functions: texture get/set, lobby
       member add/remove/list, publish) backed by `@upstash/redis` REST for v1. The adapter
       keeps a later swap to ioredis (only needed for multi-instance Colyseus in Wave 5) a
       one-file change.
-- [ ] Integration test (node --test, REAL Neon + Upstash): player+avatar insert/read
+- [x] Integration test (node --test, REAL Neon + Upstash): player+avatar insert/read
       round-trip; texture cache set/get byte-identical; test data cleaned up after.
 
 **Chunk 3.2 — REST API** *(1 opus agent)*
@@ -303,3 +303,25 @@ Append-only. Every agent adds a line when it finishes (or blocks): `date — wav
   follow-up check (see "Follow-up checks"): `/debug/world` instances drift out of sync across
   browsers — expected today (local seed + per-page clock, no backend), but real lobbies must
   render identically for every client.
+- 2026-08-18 — Wave 3 / Chunk 3.1 data layer — **done** — branch `wave-3/backend`.
+  `pnpm validate:connections` 3/3 green first. Drizzle schema (`apps/server/src/schema.ts`)
+  matches docs/ARCHITECTURE.md §3 exactly; migration `apps/server/drizzle/0000_cute_xavin.sql`
+  **applied to the real Neon DB** (`drizzle-kit migrate` over `DATABASE_URL_UNPOOLED`; app
+  queries use pooled `DATABASE_URL` via a lazily-created `pg.Pool` in `src/db.ts`).
+  `src/redis.ts` grew to the full surface: `getTexture / setTexture / addLobbyMember /
+  removeLobbyMember / listLobbyMembers / publishAvatarUpdate` (+ `del`, `ping`, `client`),
+  with the unconfigured null-object kept so no-secrets environments still boot.
+  `pnpm build` clean, `pnpm test` 52/52 node (14 shared + 32 pipeline + **6 new server**,
+  against real Neon + Upstash), `pnpm e2e` 6/6. Notes for Chunk 3.2: (a) `bytea` is a
+  `customType` with no encode/decode hooks — `node-postgres` hands textures back as a `Buffer`
+  and the test asserts byte-identity plus a matching sha256. (b) Upstash REST is JSON, so
+  texture bytes are stored base64 behind a **`b64:` prefix** — without it a digits-only base64
+  string comes back from `@upstash/redis` as a `number`; the prefix is an implementation
+  detail of the adapter, callers only ever see `Buffer`. (c) `texture_hash` is `UNIQUE`, so
+  re-uploading identical bytes raises SQLSTATE `23505` — 3.2's `POST /api/avatars` should
+  treat that as "already cached" rather than an error. Drizzle wraps driver errors and its
+  `.message` embeds the whole query (including the PNG), so branch on `err.cause.code`, never
+  on the message. (d) Server tests skip (not fail) with no `.env`, verified by running with
+  `.env` moved aside → 6 skipped, exit 0. (e) `turbo` caches the `test` task, so a cached
+  server "pass" may not have re-hit Neon/Upstash; `.env` is a `globalDependencies` entry, and
+  `pnpm test --force` re-runs for real.
