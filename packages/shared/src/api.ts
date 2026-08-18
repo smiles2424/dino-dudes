@@ -92,9 +92,31 @@ export type CreateLobbyResponse = z.infer<typeof CreateLobbyResponseSchema>;
 
 export const GetLobbyParamsSchema = z.object({ code: LobbyCodeSchema });
 
+/**
+ * One member of a lobby as reported by `GET /api/lobbies/:code`.
+ *
+ * Added in Wave 3 Chunk 3.2 (**additive**): the projector/game view needs to
+ * render everyone already in the lobby on first load, before any Colyseus
+ * state arrives. `modelSlug`/`textureHash` are `null` until that player has
+ * uploaded a drawing.
+ *
+ * (Named `LobbyMemberInfo` rather than `LobbyMember` so it can be imported
+ * alongside the server's Drizzle `lobby_members` row type without a clash.)
+ */
+export const LobbyMemberSchema = z.object({
+  playerId: PlayerIdSchema,
+  name: PlayerNameSchema,
+  modelSlug: ModelSlugSchema.nullable(),
+  textureHash: TextureHashSchema.nullable(),
+  joinedAt: z.string().datetime(),
+});
+export type LobbyMemberInfo = z.infer<typeof LobbyMemberSchema>;
+
 export const GetLobbyResponseSchema = z.object({
   lobby: LobbySchema,
   memberCount: z.number().int().nonnegative(),
+  /** Added Wave 3 Chunk 3.2 (additive) — the persisted membership, newest last. */
+  members: z.array(LobbyMemberSchema),
 });
 export type GetLobbyResponse = z.infer<typeof GetLobbyResponseSchema>;
 

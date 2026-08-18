@@ -124,11 +124,11 @@ its own gate (build + module tests + cumulative `pnpm e2e` green) before the nex
       round-trip; texture cache set/get byte-identical; test data cleaned up after.
 
 **Chunk 3.2 — REST API** *(1 opus agent)*
-- [ ] `POST /api/lobbies`, `GET /api/lobbies/:code`, `POST /api/avatars` (multipart),
+- [x] `POST /api/lobbies`, `GET /api/lobbies/:code`, `POST /api/avatars` (multipart),
       `GET /api/textures/:hash` (Redis cache → Postgres fallback, immutable cache headers,
       content-addressed by sha256)
-- [ ] Join-code generation + validation against the shared contracts
-- [ ] Integration test: upload a fixture texture over real HTTP → fetch bytes back identical;
+- [x] Join-code generation + validation against the shared contracts
+- [x] Integration test: upload a fixture texture over real HTTP → fetch bytes back identical;
       lobby create/get lifecycle; structured errors for bad uploads.
 
 **Chunk 3.3 — Colyseus room** *(1 opus agent)*
@@ -325,3 +325,39 @@ Append-only. Every agent adds a line when it finishes (or blocks): `date — wav
   `.env` moved aside → 6 skipped, exit 0. (e) `turbo` caches the `test` task, so a cached
   server "pass" may not have re-hit Neon/Upstash; `.env` is a `globalDependencies` entry, and
   `pnpm test --force` re-runs for real.
+- 2026-08-18 — Wave 3 / Chunk 3.2 REST API — **done** — branch `wave-3/backend`. Four routes
+  live behind the frozen contracts: `POST /api/lobbies` (crypto-random 5-char code from
+  `LOBBY_CODE_ALPHABET`, insert with `onConflictDoNothing` + retry so two creators can't race),
+  `GET /api/lobbies/:code` (lobby + members with each player's latest `modelSlug`/`textureHash`),
+  `POST /api/avatars` (multipart: PNG signature + IHDR check for exactly 1024², 2 MB cap, server
+  re-derives the sha256 and rejects a mismatched client-supplied hash, then player/avatar/
+  membership rows + Redis texture cache + live membership + publish), `GET /api/textures/:hash`
+  (Redis → Postgres fallback that re-warms the cache, `image/png`, `cache-control: public,
+  max-age=31536000, immutable`, ETag/304, 404 otherwise). `/healthz` now runs a real `dbPing()`
+  alongside the Redis ping, still 200 and `status: "ok"` when a dependency is merely *absent*
+  (`checks.* === null`) so E2E #1 stays green in no-secrets CI. `pnpm build` clean,
+  `pnpm test --force` 60/60 node (14 shared + **14 server**, up from 6, + 32 pipeline) against
+  real Neon + Upstash, `pnpm e2e` 6/6. Notes for Chunk 3.3: (a) **⚑ fan-out hook is already
+  in place** — `apps/server/src/avatar-events.ts`; `POST /api/avatars` awaits
+  `emitAvatarUpdated({lobbyCode, playerId, modelSlug, textureHash})` (payload ==
+  `AvatarUpdatedMessageSchema`) as its last step, and 3.3 only has to call
+  `setAvatarBroadcaster(fn)` in `index.ts`; failures inside the listener are logged, never
+  surfaced, because the avatar is already committed by then. (b) **Additive contract change**
+  in `packages/shared/src/api.ts`: `LobbyMemberSchema` (type `LobbyMemberInfo` — avoids a clash
+  with the Drizzle `lobby_members` row type) plus a `members` field on
+  `GetLobbyResponseSchema`; nothing existing was tightened. (c) Errors are the frozen
+  `ApiErrorSchema` everywhere via one `setErrorHandler` + `setNotFoundHandler`; 5xx messages are
+  scrubbed because Drizzle embeds the whole query (PNG bytes included) in `err.message`.
+  (d) Same person re-uploading = same rows: a player is reused when that name is already a
+  member of that lobby, and the duplicate `texture_hash` is handled by
+  `onConflictDoNothing(target: avatars.textureHash)` + re-select, so 23505 never reaches the
+  client. Consequence worth knowing: because `texture_hash` is globally UNIQUE, a *different*
+  player uploading byte-identical pixels gets the original uploader's avatar row back —
+  `response.player.id` is always the current player, `response.avatar.playerId` may not be.
+  (e) `@fastify/multipart` is registered with `throwFileSizeLimit: false` (the route reports
+  `texture_too_large` itself) and the whole body is drained before validation, since multipart
+  field order is the client's choice. (f) Fastify logs drop to `warn` when `NODE_TEST_CONTEXT`
+  is set, so `node --test` output stays readable. (g) Server tests still skip cleanly with no
+  `.env` (verified: 7 skipped, 1 pass, exit 0). (h) `joinUrl` is
+  `${PUBLIC_WEB_URL}/?lobby=CODE` — a query param, so it works with today's single-page web app
+  and whatever router Wave 4 picks.
