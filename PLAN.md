@@ -83,23 +83,24 @@ Branch: `wave-1/foundations`
   `.svg`), confirm it looks right on paper. ⟵ **WE ARE HERE**
 
 ### Wave 2 — Pipeline + 3D world  `[ ] not started` *(2 opus agents, concurrent, worktrees)*
-**Wave 2A — WS-A image pipeline** — branch `wave-2/pipeline`
-- [ ] js-aruco2 marker detection + drawable-quad extraction (isomorphic: browser + Node)
-- [ ] OpenCV.js perspective warp → canonical 1024×1024 PNG; levels cleanup
-- [ ] Synthetic fixture generator: programmatically composite a "drawing" onto the template,
+**Wave 2A — WS-A image pipeline** — branch `wave-2/pipeline` `[x] done`
+- [x] js-aruco2 marker detection + drawable-quad extraction (isomorphic: browser + Node)
+- [x] ~~OpenCV.js~~ perspective warp → canonical 1024×1024 PNG; levels cleanup
+      *(deviation: hand-rolled homography instead of OpenCV.js — see Progress Log)*
+- [x] Synthetic fixture generator: programmatically composite a "drawing" onto the template,
       apply random perspective/lighting → fixture photos (stand-ins until real phone photos land)
-- [ ] **Integration test:** each fixture → texture, SSIM ≥ threshold vs golden (Node, CI)
+- [x] **Integration test:** each fixture → texture, SSIM ≥ threshold vs golden (Node, CI)
 - **Human checkpoint:** replace/augment synthetic fixtures with ~10 real phone photos of a
   filled template; re-approve goldens.
 
 **Wave 2B — WS-C 3D world** — branch `wave-2/world`
-- [ ] Low-poly dino GLB(s) with planar side-projection UV unwrap matching the Texture Spec
+- [x] Low-poly dino GLB(s) with planar side-projection UV unwrap matching the Texture Spec
       (procedural/three-geometry authoring is fine for v1 if no Blender asset available)
-- [ ] r3f scene: ground, sky, lighting; dinos from state; nameplates; idle/wander motion
-- [ ] Runtime texture swap by URL/hash without model reload
-- [ ] `/debug/world` harness page: renders scene from static JSON + local texture files;
+- [x] r3f scene: ground, sky, lighting; dinos from state; nameplates; idle/wander motion
+- [x] Runtime texture swap by URL/hash without model reload
+- [x] `/debug/world` harness page: renders scene from static JSON + local texture files;
       exposes `window.__world` (dino count, applied texture hashes) for test assertions
-- [ ] **E2E #2 (Playwright):** harness loads 3 textures, `window.__world` correct, canvas
+- [x] **E2E #2 (Playwright):** harness loads 3 textures, `window.__world` correct, canvas
       screenshot-diff within tolerance
 - **Gate (whole wave):** both modules' tests + cumulative E2E (#1, #2) green after merge of both branches.
 - **Human checkpoint:** art review — does a test drawing look right on the dino?
@@ -203,3 +204,67 @@ Append-only. Every agent adds a line when it finishes (or blocks): `date — wav
   (c) The Texture Spec adds a **10 mm / 64 px safe-area inset** inside the drawable quad
   (printed as the dashed "draw inside this box"), so drawings can't invade a marker's quiet
   zone — WS-C's UV unwrap must stay inside `TEXTURE_SAFE_AREA`.
+- 2026-08-18 — Wave 2A / WS-A image pipeline — **done** — `pnpm build` clean, `pnpm test`
+  41/41 (32 in `@dino/pipeline`, up from 8), `pnpm e2e` 2/2 (E2E #1 still green).
+  `processPhoto(ImageData) → 1024² texture` runs detect → inner-corner rule → warp → levels;
+  11 seeded synthetic fixtures in `assets/fixtures/`, 10 goldens in `assets/goldens/`,
+  regenerable with `pnpm --filter @dino/pipeline generate-fixtures` (`--check` prints the
+  SSIM report for the human golden re-approval). **SSIM threshold 0.88**: the set scores
+  0.908–0.953, while a texture from the wrong photo scores 0.870, an 8px quad shift 0.853
+  and a 90°-rotated corner order 0.806. Geometry is policed separately and far more tightly
+  by asserting detected corners land within 6 px of the generator's answer key (worst: 3.9).
+  **Deviation — no OpenCV.js.** `getPerspectiveTransform`/`warpPerspective` are ~250 lines of
+  dependency-free TS in `src/homography.ts` + `src/warp.ts`. OpenCV.js is ~8 MB of WASM in
+  the phone's critical path for two functions, and no single build loads cleanly in both Node
+  (CI goldens) and a Vite bundle. The package root now bundles for the browser at **208 KB**
+  with zero Node builtins (verified with esbuild `platform: browser`); swapping in
+  `cv.getPerspectiveTransform` later is drop-in — the matrix convention is OpenCV's exactly.
+  Notes for later waves: (a) **additive** `packages/shared/src/pipeline.ts` — `PipelineError`
+  payload with a four-entry per-corner diagnostic (`corner`, `found`, `point`, `hint`), plus
+  `PipelineQuality`; Wave 4's retake UX should render `err.payload.corners` directly, and
+  `PIPELINE_QUALITY`'s blur/distance thresholds are provisional pending real photos.
+  (b) Detection is a 3-step retry ladder (raw → flat-field normalised → normalised+½ scale);
+  a raw pass alone finds all four markers in only 8 of 10 fixtures, and js-aruco2 routinely
+  reports one physical marker twice (outer + inner border contour), so same-id sightings are
+  merged by proximity, keeping the larger polygon. (c) Node-only bits (PNG codec over
+  `node:zlib`, fixture writing) live behind the `@dino/pipeline/node` subpath so `apps/web`
+  never pulls them in. (d) Wave 1's `aruco.ts` `createRequire` was replaced with a static ESM
+  import so the package entry point is browser-safe. (e) Fixtures are 1200×1600 PNGs (~1.4 MB
+  each, 16 MB total): PNG cannot compress sensor noise, so photo size is a direct repo-size
+  cost — real fixtures will be JPEGs and can be bigger.
+  (f) **Defect found and fixed while building the fixtures:** the printed dashed guide box
+  sits 10 mm *inside* the drawable quad, so it lands inside the texture — every dinosaur
+  would have worn a dashed rectangle. The pipeline now wipes everything outside
+  `TEXTURE_SAFE_AREA` (plus a 6 px overrun) as a canonical final step: that is exactly the
+  region the spec already reserves for template furniture, and the region WS-C's UV unwrap
+  already excludes. Solved geometrically rather than by tinting the guide, so it holds for
+  any printer. `rasterizeTemplate` now draws the guide too, so the golden suite covers it.
+  Consequence for WS-C / Wave 4: a stroke drawn outside the printed box is clipped, by design.
+- 2026-08-18 — Wave 2B / WS-C 3D world — **done** — branch `wave-2/world`. Four low-poly dinos
+  (trex/stego/raptor/bronto) are **procedural three.js geometry** (allowed v1 alternative to a
+  GLB — `assets/models/` stays empty): the box lists + the unwrap live in the new additive
+  `packages/shared/src/dino-models.ts` so WS-A can print a matching outline guide
+  (`dinoTextureOutline(slug)` returns the silhouette in texture pixels). **Unwrap for WS-A:**
+  mirrored planar side projection along Z, with the animal's side-view bbox stretched to fill
+  `TEXTURE_SAFE_AREA` exactly — drawing's LEFT edge → tail tip, RIGHT edge → snout, TOP edge →
+  spine/head-top, BOTTOM edge → soles; both flanks share the UVs (the far side reads mirrored,
+  head-on-head). r3f+drei scene (`apps/web/src/world/`): gradient sky dome, checkered ground,
+  fake contact shadows, trees, DOM nameplates (drei `<Html>` — deliberately NOT in-canvas text,
+  so OS fonts can't move a pixel of the screenshot), seeded wander motion (no `Math.random`).
+  `/debug/world` ships in production and renders from `apps/web/public/debug/world.json` +
+  local PNGs; `?static=1` freezes t=0, pins DPR 1, disables AA and fixes the canvas at 800×500;
+  `window.__world` = `{version, ready, frozen, dinoCount, appliedTextures, textureStatus,
+  pendingTextures, textureErrors, geometryBuilds, materialBuilds, frames, setTexture()}`.
+  Test fixtures are generated (never hand-edited) by
+  `node apps/web/scripts/generate-debug-textures.mjs`. E2E #2 (`e2e/tests/02-world.spec.ts`,
+  4 tests) asserts dinoCount/appliedTextures, nameplates, live-vs-frozen motion, a hot texture
+  swap that leaves `geometryBuilds`/`materialBuilds` unchanged, and a canvas screenshot vs
+  `e2e/tests/__screenshots__/02-world.spec.ts/world-static.png` (SwiftShader forced,
+  `maxDiffPixelRatio: 0.05`). `pnpm build` clean, `pnpm test` 22/22 node + 6/6 Playwright,
+  `pnpm e2e` 6/6 (E2E #1 untouched). Notes: (a) `playwright.config.ts` gained
+  `snapshotPathTemplate` without `{platform}` so ONE baseline serves Windows and CI's Linux —
+  recorded on Windows; if CI ever exceeds the 5 % tolerance, re-record with
+  `pnpm e2e:only -- --update-snapshots` rather than loosening it. (b) `@dino/shared`'s test
+  script now lists both test files. (c) `e2e/tsconfig.json` gained the `DOM` lib so
+  `page.evaluate` callbacks type-check. (d) Bundle is ~1 MB (three+drei) — code-split later if
+  it matters.

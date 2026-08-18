@@ -1,0 +1,54 @@
+{
+  "code": "DEBUG",
+  "createdAt": 0,
+  "players": {
+    "sess-trex": {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "name": "Rexy Roar",
+      "modelSlug": "trex",
+      "textureHash": "ad6118e263c4dddc77ca6630660aca13f9022f3e6530c3901e6941a27aee4f5a",
+      "position": {
+        "x": -4.3,
+        "y": 0,
+        "z": 1.1
+      },
+      "heading": -0.28
+    },
+    "sess-stego": {
+      "id": "22222222-2222-4222-8222-222222222222",
+      "name": "Spike Norris",
+      "modelSlug": "stego",
+      "textureHash": "4f38fa0cef3cb7b18e234d786a3665ea0d5e74e2d3cdc16cb92bf162718bfb2d",
+      "position": {
+        "x": -0.4,
+        "y": 0,
+        "z": -2.4
+      },
+      "heading": 0.22
+    },
+    "sess-raptor": {
+      "id": "33333333-3333-4333-8333-333333333333",
+      "name": "Clawdia",
+      "modelSlug": "raptor",
+      "textureHash": "e0407e2040f7906454849eb00826cf49de12f5544b0edebc906c1f0be123c3ed",
+      "position": {
+        "x": 3.4,
+        "y": 0,
+        "z": 1.4
+      },
+      "heading": -0.55
+    },
+    "sess-bronto": {
+      "id": "44444444-4444-4444-8444-444444444444",
+      "name": "Longboi",
+      "modelSlug": "bronto",
+      "textureHash": "",
+      "position": {
+        "x": 7.2,
+        "y": 0,
+        "z": -6.2
+      },
+      "heading": 0.5
+    }
+  }
+}
