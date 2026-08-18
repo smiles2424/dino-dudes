@@ -145,14 +145,14 @@ Branch: `wave-4/integration` — every chunk continues this branch; each chunk g
 build + `pnpm test --force` + cumulative `pnpm e2e` before the next launches.
 
 **Chunk 4.1 — lobby-connected game view** *(1 opus agent)*
-- [ ] Web client joins the real room (`colyseus.js` 0.16, `?lobby=CODE` from the joinUrl):
+- [x] Web client joins the real room (`colyseus.js` 0.16, `?lobby=CODE` from the joinUrl):
       game view renders the Wave 2 world FROM SYNCED ROOM STATE (server-assigned
       position/heading; wander stays client-local for now), spectator mode for projector
-- [ ] Texture flow: watch `players[*].textureHash`, prefetch on `avatar-updated` broadcast,
+- [x] Texture flow: watch `players[*].textureHash`, prefetch on `avatar-updated` broadcast,
       hot-swap via the existing Dino component; `window.__world` stays accurate in live mode
-- [ ] **E2E #3:** spectate a lobby created via API, upload a texture over HTTP (request
+- [x] **E2E #3:** spectate a lobby created via API, upload a texture over HTTP (request
       context), assert the dino + texture appear in `window.__world` in one browser
-- [ ] QR code on the game view encoding the lobby join URL for projector screens
+- [x] QR code on the game view encoding the lobby join URL for projector screens
 
 **Chunk 4.2 — capture flow UX** *(1 opus agent)*
 - [ ] Flow: name + lobby code (URL-prefilled) → pick dino → `<input capture>` photo →
@@ -424,3 +424,54 @@ Append-only. Every agent adds a line when it finishes (or blocks): `date — wav
   `listen()` — Wave 1's `app.ts` factory is exactly what makes that possible. (h) The PNG
   fixture builder is now shared at `apps/server/test/fixture-png.mjs` (was duplicated inside
   `rest-api.test.mjs`). (i) Room tests skip cleanly with no `.env` (verified: 7 skipped, exit 0).
+- 2026-08-18 — Wave 4 / Chunk 4.1 lobby-connected game view — **done** — branch
+  `wave-4/integration`. New route **`/play?lobby=CODE`** (`apps/web/src/pages/PlayPage.tsx`) is
+  the projector screen: it joins the real room over `colyseus.js` **0.16.22** and renders the
+  Wave 2 world from synchronized state. **Live mode and `/debug/world` share 100 % of the
+  renderer** — both hand `<WorldView>` a `PlayerState[]` plus a `resolveTextureUrl`, so all of
+  `window.__world` (still `version: 1`, unchanged shape) is maintained in
+  `WorldView`/`Dino` and is exactly as accurate live as in the harness; E2E #2 is untouched.
+  No `name` == **spectator**, which is the default a projector URL gets; a deliberately bare
+  name+model form is there so the screen can also play (Chunk 4.2 replaces it). New
+  `apps/web/src/lobby/`: `room.ts` (endpoint, `joinLobby`, `describeRoomError`, state→
+  `PlayerState[]`), `useLobbyRoom.ts` (the hook), `QrCode.tsx`. **Texture gate:** an
+  `avatar-updated` broadcast starts `loadWorldTexture(GET /api/textures/:hash)` immediately and
+  the player's *previous* hash keeps rendering until those bytes are cached, so the swap
+  resolves from cache in the frame it is applied; a failed or >4 s fetch releases the gate
+  anyway (a broken drawing shows a placeholder dino, never stalls the projector). Joining an
+  existing lobby prefetches everyone already drawn through the same path. QR code (
+  `qrcode-generator`, rendered as inline SVG — no `dangerouslySetInnerHTML`) encodes
+  `${origin}/?lobby=CODE`, the same shape `POST /api/lobbies` returns as `joinUrl`; the code
+  itself is set in 3.5 rem type. Room errors map to readable text + retry
+  (`ROOM_ERROR_CODES` → message). Motion sync deliberately NOT built — wander stays
+  client-local (the "two-client world consistency" follow-up still stands). `pnpm build` clean,
+  `pnpm test --force` **67/67** node + 8/8 Playwright, `pnpm e2e` **8/8** (E2E #1 and #2 green).
+  Notes for Chunk 4.2: (a) **routes** are `/` (landing — yours to turn into the capture flow;
+  it already reads `?lobby=CODE` and links onward), `/play` (game view), `/debug/world`
+  (harness, do not break). (b) **The game view's join API is the query string**: `?lobby=CODE`
+  (required), `?name=`, `?model=slug`, `?playerId=uuid`, `?spectator=1`, `?static=1`. After a
+  successful `POST /api/avatars`, land the phone on
+  `/play?lobby=CODE&name=NAME&model=SLUG&playerId=<response.player.id>` — passing the persisted
+  `playerId` is what stops the room minting a second dino for the same person. Invalid values
+  are dropped rather than turned into a join failure. (c) `window.__world.ready` requires
+  `dinoCount > 0`, so an *empty* lobby never reports ready — wait on
+  `[data-testid=lobby-status][data-status=connected]` instead. (d) **E2E #3**
+  (`e2e/tests/03-live-lobby.spec.ts`, 2 tests) creates a lobby via the request context, opens
+  `/play` as a spectator, POSTs a 1024² PNG over HTTP and asserts the dino + hash land in
+  `window.__world` inside the 5 s budget (observed ~1.5 s); it skips on
+  `/healthz` → `checks.postgres === null` (verified: 1 skipped, exit 0), so it asks the server
+  it is actually testing rather than looking for a file. (e) Bundle is now ~1.23 MB
+  (+colyseus.js/qr) — code-split when it matters. **Two shake-outs fixed while gating:**
+  (i) `apps/server/test/fixture-png.mjs` derived its whole image from a **one-byte** seed hash,
+  so it could only ever emit 256 distinct PNGs while `avatars.texture_hash` is UNIQUE — two
+  runs with colliding tints silently shared an avatar row and broke
+  `avatar.playerId === player.id`. It now stamps the seed's own bytes into row 0 (the e2e copy
+  at `e2e/support/fixture-png.ts` does the same). (ii) `turbo run test` used to run the
+  Playwright suite *concurrently* with the Neon/Upstash integration tests; both measure
+  wall-clock, and the room test's "fan-out well inside 5 s" started tripping at ~6 s.
+  `turbo.json` now gives `@dino/e2e#test` a `dependsOn` on the three Node suites. E2E #2's
+  "the live world animates" check was also switched from one sample after a fixed 1.2 s to
+  `expect.poll` — same assertion, room to be observed on a loaded machine.
+  **Known litter:** E2E #3 has no DB client, so its lobby/player/avatar rows stay in Neon;
+  they are tagged `e2e-<8 hex>` (lobby name `e2e <id>`) and Chunk 4.3 should decide whether the
+  browser suite gets a cleanup path.

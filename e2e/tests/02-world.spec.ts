@@ -169,10 +169,20 @@ test('the world idles when live and is perfectly frozen under ?static=1', async 
   await page.waitForFunction(() => window.__world?.ready === true, undefined, { timeout: 25_000 });
   const plate = page.getByTestId('nameplate').first();
   const liveBefore = await plate.boundingBox();
-  await page.waitForTimeout(1200);
-  const liveAfter = await plate.boundingBox();
-  expect(liveBefore && liveAfter).toBeTruthy();
-  expect(Math.abs((liveAfter?.x ?? 0) - (liveBefore?.x ?? 0))).toBeGreaterThan(1);
+  expect(liveBefore).toBeTruthy();
+  /*
+   * Polled rather than sampled once after a fixed wait (Wave 4, Chunk 4.1):
+   * the assertion is unchanged — the plate must really travel — but the wander
+   * only advances on rendered frames, and a worker sharing the machine with
+   * several other SwiftShader browsers can render almost none inside a fixed
+   * 1.2 s. This gives the same fact room to be observed.
+   */
+  await expect
+    .poll(async () => Math.abs(((await plate.boundingBox())?.x ?? 0) - (liveBefore?.x ?? 0)), {
+      timeout: 15_000,
+      message: 'the live world must animate',
+    })
+    .toBeGreaterThan(1);
 
   // Static: nothing moves at all — the precondition for a stable baseline.
   await openWorld(page);

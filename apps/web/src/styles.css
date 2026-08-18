@@ -154,3 +154,150 @@ dd {
 .debug-hud code {
   color: #48d597;
 }
+
+/* ── /play — the live game view (Wave 4, Chunk 4.1) ──────────────────────── */
+
+/* The world fills the screen; every HUD element floats over it, so the
+   projector shows the world and nothing else competes with it. */
+.play {
+  position: relative;
+  min-height: 100dvh;
+  overflow: hidden;
+}
+
+.play .world-frame {
+  position: absolute;
+  inset: 0;
+}
+
+.play--static {
+  min-height: 0;
+}
+
+.play-banner {
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  z-index: 30;
+  padding: 0.6rem 1rem;
+  border-radius: 0.75rem;
+  background: rgba(16, 21, 27, 0.72);
+  border: 1px solid rgba(230, 237, 243, 0.2);
+  backdrop-filter: blur(2px);
+}
+
+.lobby-code-label {
+  display: block;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: #9fb0c0;
+}
+
+.lobby-code {
+  display: block;
+  font-size: clamp(2rem, 6vw, 3.5rem);
+  line-height: 1.05;
+  letter-spacing: 0.14em;
+  font-variant-numeric: tabular-nums;
+}
+
+.lobby-status {
+  margin: 0.35rem 0 0;
+  font-size: 0.85rem;
+  color: #9fb0c0;
+}
+
+.lobby-status[data-status='connected'] {
+  color: #48d597;
+}
+.lobby-status[data-status='error'],
+.lobby-status[data-status='closed'] {
+  color: #f2685f;
+}
+
+.join-panel {
+  position: absolute;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.65rem;
+  border-radius: 0.75rem;
+  background: rgba(16, 21, 27, 0.78);
+  border: 1px solid rgba(230, 237, 243, 0.2);
+}
+
+.join-panel svg {
+  display: block;
+  border-radius: 0.35rem;
+}
+
+.join-hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #9fb0c0;
+  max-width: 12rem;
+}
+
+.join-hint code {
+  color: #48d597;
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.play-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  background: rgba(16, 21, 27, 0.82);
+}
+
+.play-overlay .card {
+  margin: 0;
+  max-width: 26rem;
+}
+
+.quick-join {
+  position: absolute;
+  left: 1rem;
+  bottom: 1rem;
+  z-index: 30;
+  display: flex;
+  gap: 0.4rem;
+  padding: 0.5rem;
+  border-radius: 0.75rem;
+  background: rgba(16, 21, 27, 0.72);
+  border: 1px solid rgba(230, 237, 243, 0.2);
+}
+
+.row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+input,
+select,
+button {
+  font: inherit;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.4rem;
+  border: 1px solid #263241;
+  background: #10151b;
+  color: #e6edf3;
+}
+
+button {
+  cursor: pointer;
+  border-color: #35506b;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}

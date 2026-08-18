@@ -24,6 +24,18 @@
     "test": {
       "dependsOn": ["^build"]
     },
+    /*
+     * The browser suite runs *after* the Node suites, not alongside them
+     * (Wave 4, Chunk 4.1). `turbo run test` used to start Playwright's browser
+     * workers while the server integration tests were hammering real Neon and
+     * Upstash; both sides then measure wall-clock latency, and the room test's
+     * "fan-out lands well inside 5 s" assertion started tripping on a loaded
+     * machine. Serialising costs a little wall clock and buys a suite whose
+     * timing assertions mean what they say.
+     */
+    "@dino/e2e#test": {
+      "dependsOn": ["^build", "@dino/shared#test", "@dino/pipeline#test", "@dino/server#test"]
+    },
     "dev": {
       "dependsOn": ["^build"],
       "cache": false,

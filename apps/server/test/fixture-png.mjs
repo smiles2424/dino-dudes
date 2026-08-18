@@ -51,6 +51,19 @@ export function makePng(size, seed) {
       raw[p + 2] = tint;
     }
   }
+  /*
+   * Stamp the seed into the first row's blue channel (Wave 4, Chunk 4.1).
+   *
+   * `tint` is one byte, so the generator could only ever produce 256 distinct
+   * images — and `avatars.texture_hash` is UNIQUE, so two runs with colliding
+   * tints silently share one avatar row and `avatar.playerId` stops matching
+   * `player.id` (the documented consequence in the Chunk 3.2 log note). Writing
+   * the seed's own bytes in makes distinct seeds mean distinct content
+   * addresses, always. ~1/256 of runs used to trip over this.
+   */
+  for (let i = 0; i < seed.length && i < size; i++) {
+    raw[1 + i * 3 + 2] = seed.charCodeAt(i) & 0xff;
+  }
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     chunk('IHDR', ihdr),

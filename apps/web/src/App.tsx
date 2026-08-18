@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { TEXTURE, TEXTURE_SPEC } from '@dino/shared';
+import { useEffect, useMemo, useState } from 'react';
+import { LobbyCodeSchema, TEXTURE, TEXTURE_SPEC } from '@dino/shared';
 import { API_BASE, fetchHealth } from './api.js';
 import type { Health } from '@dino/shared';
 
@@ -18,6 +18,7 @@ export function App(): JSX.Element {
   const [status, setStatus] = useState<Status>('checking');
   const [health, setHealth] = useState<Health | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const lobbyCode = useMemo(readLobbyCode, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -80,6 +81,24 @@ export function App(): JSX.Element {
         ) : null}
       </section>
 
+      {/*
+        A lobby join link (`/?lobby=CODE`, the shape `POST /api/lobbies` hands
+        out and the projector's QR code encodes) lands here. Chunk 4.2 turns
+        this into the capture flow; for now it just forwards to the game view.
+      */}
+      {lobbyCode ? (
+        <section className="card" data-testid="lobby-invite">
+          <h2>
+            Lobby <strong data-testid="invite-code">{lobbyCode}</strong>
+          </h2>
+          <p>
+            <a href={`/play?lobby=${lobbyCode}`} data-testid="invite-watch-link">
+              Open the game view
+            </a>
+          </p>
+        </section>
+      ) : null}
+
       <section className="card">
         <h2>3D world</h2>
         <p>
@@ -87,6 +106,12 @@ export function App(): JSX.Element {
             Open the world harness
           </a>{' '}
           — four low-poly dinos wearing test drawings, no backend required.
+        </p>
+        <p>
+          <a href="/play" data-testid="play-link">
+            Open the game view
+          </a>{' '}
+          — a live lobby on the projector screen.
         </p>
       </section>
 
@@ -99,6 +124,13 @@ export function App(): JSX.Element {
       </section>
     </main>
   );
+}
+
+/** The lobby code from a `/?lobby=CODE` join link, if it is a valid one. */
+function readLobbyCode(): string | null {
+  const raw = new URLSearchParams(window.location.search).get('lobby') ?? '';
+  const parsed = LobbyCodeSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
 }
 
 function describeCheck(value: boolean | null | undefined): string {
