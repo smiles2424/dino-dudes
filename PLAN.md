@@ -61,6 +61,13 @@ A wave is complete only when ALL of:
 
 ### Wave 1 — Contracts & foundations  `[ ] not started` *(1 opus agent, sequential)*
 Branch: `wave-1/foundations`
+- [ ] **FIRST: validate third-party connections before any other work.** Using the values in
+      `.env`, open a real connection to Neon (`SELECT 1` over `DATABASE_URL` and
+      `DATABASE_URL_UNPOOLED`) and Upstash (`PING` over `REDIS_URL` via ioredis). If either
+      fails, troubleshoot up to ~3 attempts (obvious causes only: sslmode, quoting, rediss vs
+      redis, pooled vs direct host) — then **STOP the wave**, record the failure in the
+      Progress Log, and report back to the human. Do not proceed with any implementation work
+      while validation is failing.
 - [ ] pnpm workspaces + Turborepo tooling; TypeScript strict; root scripts: `dev`, `build`, `test`, `e2e`
 - [ ] `packages/shared`: Zod schemas for API + Colyseus room state; **Texture Spec** constants
       (1024×1024 PNG, ArUco 4x4_50 dict, corner IDs 0–3, drawable-quad geometry)
@@ -145,3 +152,11 @@ Waves 1–2 run entirely without secrets.
 Append-only. Every agent adds a line when it finishes (or blocks): `date — wave/module — result — notes`.
 
 - 2026-08-18 — Wave 0 / scaffold — done — repo initialized, plan written, awaiting human review + `.env` fill-in.
+- 2026-08-18 — Wave 1 / connection validation — **BLOCKED, wave stopped** — Neon OK (pooled +
+  unpooled both pass `SELECT 1`, Postgres 17.10). Upstash FAILS: TCP to
+  `pumped-vulture-135579.upstash.io:6379` connects, but the TLS handshake is reset mid-flight
+  (openssl: `write:errno=10054`, 0 bytes read after ClientHello); TLS to the same host on
+  port 443 succeeds with a valid `*.upstash.io` cert. Diagnosis: something on the local
+  network path (Windows Firewall / antivirus TLS filtering / ISP) blocks TLS on port 6379.
+  Not fixable from this machine's code. Needs human: allow outbound TLS on 6379, test from
+  another network, or check AV/firewall SSL-scanning settings. No implementation work started.
