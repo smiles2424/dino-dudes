@@ -140,17 +140,35 @@ its own gate (build + module tests + cumulative `pnpm e2e` green) before the nex
 - **Gate (whole wave):** `[x]` all integration tests green against real Neon + Upstash
   (`pnpm test --force` 67/67); cumulative E2E green (`pnpm e2e` 6/6); `pnpm build` clean.
 
-### Wave 4 — Mobile capture flow & flagship E2E  `[ ] not started` *(1 opus agent)*
-Branch: `wave-4/integration`
-- [ ] Capture flow: name + lobby code → pick dino → `<input capture>` photo → pipeline runs
-      in-browser → preview drawing on 3D model → confirm/retake → upload → game view
-- [ ] Error UX: markers not found (per-corner hints), blur warning, retake loop
-- [ ] QR code encoding lobby join URL for projector screens
+### Wave 4 — Mobile capture flow & flagship E2E  `[ ] not started` *(3 opus agents, SEQUENTIAL chunks, one branch)*
+Branch: `wave-4/integration` — every chunk continues this branch; each chunk gates on
+build + `pnpm test --force` + cumulative `pnpm e2e` before the next launches.
+
+**Chunk 4.1 — lobby-connected game view** *(1 opus agent)*
+- [ ] Web client joins the real room (`colyseus.js` 0.16, `?lobby=CODE` from the joinUrl):
+      game view renders the Wave 2 world FROM SYNCED ROOM STATE (server-assigned
+      position/heading; wander stays client-local for now), spectator mode for projector
+- [ ] Texture flow: watch `players[*].textureHash`, prefetch on `avatar-updated` broadcast,
+      hot-swap via the existing Dino component; `window.__world` stays accurate in live mode
+- [ ] **E2E #3:** spectate a lobby created via API, upload a texture over HTTP (request
+      context), assert the dino + texture appear in `window.__world` in one browser
+- [ ] QR code on the game view encoding the lobby join URL for projector screens
+
+**Chunk 4.2 — capture flow UX** *(1 opus agent)*
+- [ ] Flow: name + lobby code (URL-prefilled) → pick dino → `<input capture>` photo →
+      `processPhoto` in-browser → preview drawing ON the 3D model → confirm/retake →
+      upload → land in game view
+- [ ] Error UX: per-corner marker hints from `PipelineError`, blur warning, retake loop
+- [ ] **E2E #4:** capture flow with a fixture photo file through the real pipeline in-browser
+      → upload → lands in game view (single browser, real server)
+
+**Chunk 4.3 — flagship E2E** *(1 opus agent)*
 - [ ] **Flagship E2E (Playwright):** desktop browser A creates lobby + watches world; mobile-
       emulated browser B joins by code, pushes fixture photo through the REAL pipeline → API →
       Neon → Upstash → Colyseus; assert B's dino appears in A's `window.__world` with expected
       texture hash ≤ 5s; canvas screenshot-diff
-- **Gate:** flagship E2E green in CI; full cumulative suite green.
+- [ ] Fix anything the flagship shakes out; wire it into CI (skip cleanly without secrets)
+- **Gate (whole wave):** flagship E2E green; full cumulative suite green.
 - **Human checkpoint:** real paper-to-screen dry run with 3–5 people.
 
 ### Wave 5 — Hardening & deploy  `[ ] not started` *(optional, 1 opus agent)*
