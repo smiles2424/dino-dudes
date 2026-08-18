@@ -1,37 +1,48 @@
 /**
- * ArUco marker bit patterns, sourced from **the same dictionary data the
- * detector will use** (`js-aruco2`), so the generator and Wave 2A's detector
- * can never drift apart.
+ * The single place `js-aruco2` is loaded, plus the marker bit patterns.
+ *
+ * Both the template GENERATOR and the photo DETECTOR read the dictionary from
+ * here, so the markers we print can never drift from the markers we read.
  *
  * `4x4_50` is OpenCV's `DICT_4X4_50`, which is the first 50 codes of the
  * `ARUCO_4X4_1000` table js-aruco2 ships. Each code is a 16-character bit
  * string in row-major order where `'1'` means a WHITE cell.
+ *
+ * ── Isomorphism ────────────────────────────────────────────────────────────
+ * Wave 1 reached js-aruco2 through `createRequire('node:module')`, which made
+ * this module — and therefore the package entry point — Node-only. Wave 2A
+ * needs the detector in the browser too, so it is a plain static ESM import of
+ * the CommonJS files. Node resolves them through its CJS interop (verified);
+ * Vite/esbuild converts them at bundle time. Both dictionary and detector go
+ * through the same CJS module instance, which is what makes the
+ * self-registering dictionary side-effect import work.
  */
-import { createRequire } from 'node:module';
+import arucoModule from 'js-aruco2/src/aruco.js';
+// Side-effect import: registers `ARUCO_4X4_1000` on the AR namespace above.
+import 'js-aruco2/src/dictionaries/aruco_4x4_1000.js';
 import { MARKERS } from '@dino/shared';
+import type { ArucoDetector, ArucoDictionary, ArucoNamespace } from 'js-aruco2/src/aruco.js';
 
-const require = createRequire(import.meta.url);
+const AR: ArucoNamespace = arucoModule.AR;
 
-interface ArucoDictionary {
-  nBits: number;
-  markSize: number;
-  codeList: string[];
-}
-
-interface ArucoNamespace {
-  DICTIONARIES: Record<string, unknown>;
-  Dictionary: new (name: string) => ArucoDictionary;
-}
-
-let cached: ArucoDictionary | undefined;
+let cachedDictionary: ArucoDictionary | undefined;
 
 function dictionary(): ArucoDictionary {
-  if (cached) return cached;
-  // js-aruco2 is CommonJS and its dictionary files self-register on `AR`.
-  const { AR } = require('js-aruco2/src/aruco.js') as { AR: ArucoNamespace };
-  require('js-aruco2/src/dictionaries/aruco_4x4_1000.js');
-  cached = new AR.Dictionary(MARKERS.jsAruco2Dictionary);
-  return cached;
+  cachedDictionary ??= new AR.Dictionary(MARKERS.jsAruco2Dictionary);
+  return cachedDictionary;
+}
+
+/**
+ * A detector configured for the frozen spec. `maxHammingDistance: 0` means we
+ * only accept exact code matches — with a 4×4 dictionary and only four ids in
+ * play, tolerating bit errors buys nothing and invites false positives from
+ * dark rectangles elsewhere in a photo.
+ */
+export function createDetector(maxHammingDistance = 0): ArucoDetector {
+  return new AR.Detector({
+    dictionaryName: MARKERS.jsAruco2Dictionary,
+    maxHammingDistance,
+  });
 }
 
 /** Number of distinct marker IDs usable as `4x4_50`. */

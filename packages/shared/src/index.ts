@@ -7,3 +7,5 @@
 export * from './texture-spec.js';
 export * from './api.js';
 export * from './room.js';
+// Added in Wave 2A (additive): what `@dino/pipeline` returns / throws.
+export * from './pipeline.js';

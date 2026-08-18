@@ -83,12 +83,13 @@ Branch: `wave-1/foundations`
   `.svg`), confirm it looks right on paper. ⟵ **WE ARE HERE**
 
 ### Wave 2 — Pipeline + 3D world  `[ ] not started` *(2 opus agents, concurrent, worktrees)*
-**Wave 2A — WS-A image pipeline** — branch `wave-2/pipeline`
-- [ ] js-aruco2 marker detection + drawable-quad extraction (isomorphic: browser + Node)
-- [ ] OpenCV.js perspective warp → canonical 1024×1024 PNG; levels cleanup
-- [ ] Synthetic fixture generator: programmatically composite a "drawing" onto the template,
+**Wave 2A — WS-A image pipeline** — branch `wave-2/pipeline` `[x] done`
+- [x] js-aruco2 marker detection + drawable-quad extraction (isomorphic: browser + Node)
+- [x] ~~OpenCV.js~~ perspective warp → canonical 1024×1024 PNG; levels cleanup
+      *(deviation: hand-rolled homography instead of OpenCV.js — see Progress Log)*
+- [x] Synthetic fixture generator: programmatically composite a "drawing" onto the template,
       apply random perspective/lighting → fixture photos (stand-ins until real phone photos land)
-- [ ] **Integration test:** each fixture → texture, SSIM ≥ threshold vs golden (Node, CI)
+- [x] **Integration test:** each fixture → texture, SSIM ≥ threshold vs golden (Node, CI)
 - **Human checkpoint:** replace/augment synthetic fixtures with ~10 real phone photos of a
   filled template; re-approve goldens.
 
@@ -203,3 +204,31 @@ Append-only. Every agent adds a line when it finishes (or blocks): `date — wav
   (c) The Texture Spec adds a **10 mm / 64 px safe-area inset** inside the drawable quad
   (printed as the dashed "draw inside this box"), so drawings can't invade a marker's quiet
   zone — WS-C's UV unwrap must stay inside `TEXTURE_SAFE_AREA`.
+- 2026-08-18 — Wave 2A / WS-A image pipeline — **done** — `pnpm build` clean, `pnpm test`
+  41/41 (32 in `@dino/pipeline`, up from 8), `pnpm e2e` 2/2 (E2E #1 still green).
+  `processPhoto(ImageData) → 1024² texture` runs detect → inner-corner rule → warp → levels;
+  11 seeded synthetic fixtures in `assets/fixtures/`, 10 goldens in `assets/goldens/`,
+  regenerable with `pnpm --filter @dino/pipeline generate-fixtures` (`--check` prints the
+  SSIM report for the human golden re-approval). **SSIM threshold 0.88**: the set scores
+  0.908–0.953, while a texture from the wrong photo scores 0.870, an 8px quad shift 0.853
+  and a 90°-rotated corner order 0.806. Geometry is policed separately and far more tightly
+  by asserting detected corners land within 6 px of the generator's answer key (worst: 3.9).
+  **Deviation — no OpenCV.js.** `getPerspectiveTransform`/`warpPerspective` are ~250 lines of
+  dependency-free TS in `src/homography.ts` + `src/warp.ts`. OpenCV.js is ~8 MB of WASM in
+  the phone's critical path for two functions, and no single build loads cleanly in both Node
+  (CI goldens) and a Vite bundle. The package root now bundles for the browser at **208 KB**
+  with zero Node builtins (verified with esbuild `platform: browser`); swapping in
+  `cv.getPerspectiveTransform` later is drop-in — the matrix convention is OpenCV's exactly.
+  Notes for later waves: (a) **additive** `packages/shared/src/pipeline.ts` — `PipelineError`
+  payload with a four-entry per-corner diagnostic (`corner`, `found`, `point`, `hint`), plus
+  `PipelineQuality`; Wave 4's retake UX should render `err.payload.corners` directly, and
+  `PIPELINE_QUALITY`'s blur/distance thresholds are provisional pending real photos.
+  (b) Detection is a 3-step retry ladder (raw → flat-field normalised → normalised+½ scale);
+  a raw pass alone finds all four markers in only 8 of 10 fixtures, and js-aruco2 routinely
+  reports one physical marker twice (outer + inner border contour), so same-id sightings are
+  merged by proximity, keeping the larger polygon. (c) Node-only bits (PNG codec over
+  `node:zlib`, fixture writing) live behind the `@dino/pipeline/node` subpath so `apps/web`
+  never pulls them in. (d) Wave 1's `aruco.ts` `createRequire` was replaced with a static ESM
+  import so the package entry point is browser-safe. (e) Fixtures are 1200×1600 PNGs (~1.4 MB
+  each, 16 MB total): PNG cannot compress sensor noise, so photo size is a direct repo-size
+  cost — real fixtures will be JPEGs and can be bigger.
