@@ -1,6 +1,8 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
+    // DOM so `page.evaluate` callbacks (which run in the browser) type-check.
+    "lib": ["ES2023", "DOM"],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "noEmit": true,

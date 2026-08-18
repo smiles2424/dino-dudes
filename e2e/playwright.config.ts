@@ -22,6 +22,16 @@ export default defineConfig({
   timeout: 30_000,
   expect: { timeout: 10_000 },
 
+  /**
+   * One committed screenshot baseline for every OS (added in Wave 2B).
+   *
+   * Playwright's default template appends `{platform}`, which would mean a
+   * `-win32` baseline that CI (ubuntu) can never satisfy. Instead the 3D tests
+   * force SwiftShader, a fixed viewport/DPR and a fixed-size canvas, and keep
+   * all text out of the canvas — so a single baseline is valid everywhere.
+   */
+  snapshotPathTemplate: '{testDir}/__screenshots__/{testFileName}/{arg}{ext}',
+
   use: {
     baseURL: WEB_BASE_URL,
     trace: 'on-first-retry',
