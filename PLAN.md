@@ -35,6 +35,9 @@ A wave is complete only when ALL of:
 - Agents must not modify files owned by another module except `packages/shared` **additions**
   (never breaking changes to frozen contracts — propose those in the Progress Log instead).
 - Human checkpoints are listed per wave; the orchestrator stops and asks when one is reached.
+- **Keep chunks small** *(human feedback, 2026-08-18)*: target agent runs well under ~30
+  minutes — split waves into sequential chunks with their own gates rather than one long run;
+  tighter loops give better results.
 
 ## Module ownership map
 
@@ -105,22 +108,37 @@ Branch: `wave-1/foundations`
 - **Gate (whole wave):** both modules' tests + cumulative E2E (#1, #2) green after merge of both branches.
 - **Human checkpoint:** art review — does a test drawing look right on the dino?
 
-### Wave 3 — Backend platform  `[ ] not started` *(1 opus agent)* **⚠ requires `.env` secrets**
-Branch: `wave-3/backend`
-- [ ] Drizzle schema + migrations on Neon (players, avatars, lobbies, lobby_members —
-      SQL in docs/ARCHITECTURE.md)
-- [ ] API: `POST /api/lobbies`, `GET /api/lobbies/:code`, `POST /api/avatars` (multipart),
-      `GET /api/textures/:hash` (Redis cache → Postgres fallback, immutable cache headers)
-- [ ] Colyseus LobbyRoom: join-code rooms, synced player map `{id, name, modelSlug,
-      textureHash}`, avatar-updated broadcast wired to Redis pub/sub
-- [ ] Upstash via a thin adapter module (`apps/server/src/redis.ts`, ~6 functions: texture
-      get/set, lobby member add/remove/list, publish) backed by `@upstash/redis` REST for v1.
-      Avatar-update fanout to Colyseus rooms is a direct in-process call (single process in
-      v1) — no cross-process pub/sub needed. The adapter keeps a later swap to ioredis
-      (needed only for multi-instance Colyseus presence in Wave 5) a one-file change.
+### Wave 3 — Backend platform  `[ ] not started` *(3 opus agents, SEQUENTIAL chunks, one branch)* **⚠ requires `.env` secrets**
+Branch: `wave-3/backend` — every chunk continues this same branch. *Human feedback after
+Wave 2: ~30-minute agent runs are too long; chunks below target well under that, each with
+its own gate (build + module tests + cumulative `pnpm e2e` green) before the next launches.*
+
+**Chunk 3.1 — data layer** *(1 opus agent)*
+- [ ] Drizzle schema + migrations applied to Neon (players, avatars, lobbies, lobby_members —
+      SQL in docs/ARCHITECTURE.md); `apps/server/src/db.ts`
+- [ ] Flesh out `apps/server/src/redis.ts` adapter (~6 functions: texture get/set, lobby
+      member add/remove/list, publish) backed by `@upstash/redis` REST for v1. The adapter
+      keeps a later swap to ioredis (only needed for multi-instance Colyseus in Wave 5) a
+      one-file change.
+- [ ] Integration test (node --test, REAL Neon + Upstash): player+avatar insert/read
+      round-trip; texture cache set/get byte-identical; test data cleaned up after.
+
+**Chunk 3.2 — REST API** *(1 opus agent)*
+- [ ] `POST /api/lobbies`, `GET /api/lobbies/:code`, `POST /api/avatars` (multipart),
+      `GET /api/textures/:hash` (Redis cache → Postgres fallback, immutable cache headers,
+      content-addressed by sha256)
+- [ ] Join-code generation + validation against the shared contracts
+- [ ] Integration test: upload a fixture texture over real HTTP → fetch bytes back identical;
+      lobby create/get lifecycle; structured errors for bad uploads.
+
+**Chunk 3.3 — Colyseus room** *(1 opus agent)*
+- [ ] LobbyRoom: join-code rooms, synced player map `{id, name, modelSlug, textureHash}`,
+      avatar-updated fanout as a direct in-process call from the API route (single process in
+      v1 — no cross-process pub/sub needed)
 - [ ] **Integration test (@colyseus/testing):** client A joins lobby → POST fixture texture →
       client B's room state gets new hash → `GET /textures/:hash` bytes match upload
-- **Gate:** integration test green against real Neon + Upstash; cumulative E2E green.
+- **Gate (whole wave):** all integration tests green against real Neon + Upstash; cumulative
+  E2E green.
 
 ### Wave 4 — Mobile capture flow & flagship E2E  `[ ] not started` *(1 opus agent)*
 Branch: `wave-4/integration`
@@ -139,6 +157,17 @@ Branch: `wave-4/integration`
 - [ ] `@colyseus/loadtest` ~50 clients in one lobby
 - [ ] Deploy: server → Railway/Fly/Render; client → Vercel/Netlify; CI deploy on `main`
 - [ ] Lobby lifecycle polish (idle dispose, `closed_at`), rate limiting on upload
+
+## Follow-up checks (validate before the event)
+
+- [ ] **Two-client world consistency** *(raised by human 2026-08-18 after the Wave 2 art
+      review)*: two browsers in the SAME lobby must see the SAME world — dino positions and
+      orientations in sync. `/debug/world` drifts across instances today by design (wander is
+      seeded locally and timed from each page's own load clock; the harness has no backend).
+      Fix belongs in Wave 4/5: either make positions server-authoritative in room state, or
+      have the server issue the motion seed + a synced clock so clients compute identical
+      trajectories. Validate with an E2E: two browser contexts join one lobby, sample
+      `window.__world` positions/headings at the same tick, assert equal within tolerance.
 
 ---
 
@@ -268,3 +297,9 @@ Append-only. Every agent adds a line when it finishes (or blocks): `date — wav
   script now lists both test files. (c) `e2e/tsconfig.json` gained the `DOM` lib so
   `page.evaluate` callbacks type-check. (d) Bundle is ~1 MB (three+drei) — code-split later if
   it matters.
+- 2026-08-18 — Wave 2 / integration — **done, merged as PR #2** — orchestrator merged
+  `wave-2/pipeline` + `wave-2/world`, gate verified on the merged tree: shared 14/14,
+  pipeline 32/32, cumulative E2E 6/6. Human art review APPROVED. One observation logged as a
+  follow-up check (see "Follow-up checks"): `/debug/world` instances drift out of sync across
+  browsers — expected today (local seed + per-page clock, no backend), but real lobbies must
+  render identically for every client.
