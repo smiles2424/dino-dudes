@@ -16,9 +16,7 @@ env:
 jobs:
   build-test-e2e:
     name: build · test · e2e
-    runs-on: ubuntu-24.04
-    container:
-      image: mcr.microsoft.com/playwright:v1.49.1-noble
+    runs-on: ubuntu-latest
     timeout-minutes: 20
 
     steps:
@@ -38,6 +36,9 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: Set up Playwright test docker
+        uses: dtinth/setup-playwright-test-docker@main
 
       - name: Module tests
         run: pnpm test
