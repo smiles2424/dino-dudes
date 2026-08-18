@@ -10,6 +10,7 @@
  *     → the room fans the upload out over the socket, the page prefetches the
  *       PNG from `GET /api/textures/:hash` and hot-swaps it onto the model
  *     → assert the dino AND its texture hash are in `window.__world` ≤ 5 s
+ *       after the upload was accepted
  *
  * That last assertion is the whole product in one line: paper → phone → API →
  * Postgres → Redis → Colyseus → someone else's screen. Chunk 4.3's flagship
@@ -44,7 +45,18 @@ const RUN_UUID = randomUUID();
 const RUN_ID = RUN_UUID.slice(0, 8);
 const PLAYER_NAME = `e2e-${RUN_ID}`;
 
-/** The Wave 4 budget: a drawing is on the projector within five seconds. */
+/**
+ * The Wave 4 budget: once the upload has been accepted, the drawing is on the
+ * projector within five seconds.
+ *
+ * The clock starts when `POST /api/avatars` *responds* (Chunk 4.3). It used to
+ * start when the request was sent, which folded the upload itself — a 1 MB
+ * multipart body, a Neon insert and an Upstash publish, 1.5 s on a good day and
+ * 8 s on a bad one from a home connection — into a budget that exists to
+ * measure fan-out. The inner `waitForFunction` always had this semantic; now
+ * the reported number matches it. Upload latency is still printed, so a
+ * regression there is visible rather than silently eating the fan-out budget.
+ */
 const FANOUT_BUDGET_MS = 5000;
 
 test.use({
@@ -107,7 +119,7 @@ test('a drawing uploaded over HTTP appears on the spectator screen', async ({ pa
   const png = makePng(1024, RUN_UUID);
   const expectedHash = createHash('sha256').update(png).digest('hex');
 
-  const started = Date.now();
+  const postStarted = Date.now();
   const uploaded = await request.post(`${SERVER_BASE_URL}/api/avatars`, {
     multipart: {
       lobbyCode: lobby.code,
@@ -116,6 +128,10 @@ test('a drawing uploaded over HTTP appears on the spectator screen', async ({ pa
       texture: { name: 'texture.png', mimeType: 'image/png', buffer: png },
     },
   });
+  // The fan-out budget starts here: the server has the drawing and has told
+  // everyone about it, and every millisecond after this is the room's.
+  const fanoutStarted = Date.now();
+  const uploadMs = fanoutStarted - postStarted;
   expect(uploaded.status(), await uploaded.text()).toBe(201);
   const avatar = CreateAvatarResponseSchema.parse(await uploaded.json());
   expect(avatar.avatar.textureHash).toBe(expectedHash);
@@ -128,7 +144,8 @@ test('a drawing uploaded over HTTP appears on the spectator screen', async ({ pa
     { id: playerId, hash: expectedHash },
     { timeout: FANOUT_BUDGET_MS },
   );
-  const elapsed = Date.now() - started;
+  const fanoutMs = Date.now() - fanoutStarted;
+  console.log(`[e2e#3] POST /api/avatars: ${uploadMs}ms · upload → projector: ${fanoutMs}ms`);
 
   const world = await page.evaluate(() => ({ ...window.__world }));
   expect(world.dinoCount).toBe(1);
@@ -139,7 +156,7 @@ test('a drawing uploaded over HTTP appears on the spectator screen', async ({ pa
   // Live mode is not screenshot mode; the world is animating.
   expect(world.frozen).toBe(false);
   // The harness and the live view report the same contract version.
-  expect(world.version).toBe(1);
+  expect(world.version).toBe(2);
 
   // The nameplate comes from synchronized state, not from anything local.
   await expect(page.getByTestId('nameplate')).toHaveCount(1);
@@ -147,5 +164,5 @@ test('a drawing uploaded over HTTP appears on the spectator screen', async ({ pa
   await expect(status).toHaveAttribute('data-dino-count', '1');
 
   expect(failures, 'the live game view ran without console/page errors').toEqual([]);
-  expect(elapsed, `upload → projector took ${elapsed}ms`).toBeLessThan(FANOUT_BUDGET_MS);
+  expect(fanoutMs, `upload → projector took ${fanoutMs}ms`).toBeLessThan(FANOUT_BUDGET_MS);
 });

@@ -9,7 +9,7 @@
  *   5. player row (reused if this name is already in this lobby)
  *   6. avatar row, deduped on texture_hash (UNIQUE — see below)
  *   7. lobby membership (Postgres + Redis)
- *   8. cache texture bytes in Redis
+ *   8. cache texture bytes in memory + Redis
  *   9. ⚑ in-process fan-out hook for Chunk 3.3
  *
  * Steps 7–9 are best-effort: once the rows are committed the upload has
@@ -31,6 +31,7 @@ import { avatars, db, hasDatabase, lobbies, lobbyMembers, players } from '../db.
 import { badRequest, lobbyClosed, notConfigured, notFound, textureInvalid, textureTooLarge } from '../errors.js';
 import { checkTexturePng } from '../png.js';
 import { redis } from '../redis.js';
+import { rememberTexture } from '../texture-cache.js';
 
 /** Postgres `unique_violation`. Drizzle nests the driver error under `cause`. */
 const UNIQUE_VIOLATION = '23505';
@@ -197,6 +198,10 @@ export async function registerAvatarRoutes(app: FastifyInstance): Promise<void> 
       .onConflictDoNothing();
 
     // 8. cache + live membership (best effort) -------------------------------
+    // Memory first, and unconditionally: every screen in the lobby is about to
+    // ask this process for exactly these bytes, and that fetch is nearly all of
+    // the five-second "drawing on the projector" budget.
+    rememberTexture(textureHash, textureBytes);
     try {
       await redis.setTexture(textureHash, textureBytes);
       await redis.addLobbyMember(lobbyCode, player.id);

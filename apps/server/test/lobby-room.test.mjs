@@ -194,8 +194,20 @@ describe('Chunk 3.3 LobbyRoom (real Colyseus + Fastify + Neon + Upstash)', () =>
       form.set('modelSlug', 'trex');
       form.set('texture', new Blob([TEXTURE], { type: 'image/png' }), 'texture.png');
 
-      const started = Date.now();
+      const postStarted = Date.now();
       const body = await jsonRequest('/api/avatars', { method: 'POST', body: form }, 201);
+      /*
+       * The budget starts when the upload is ACCEPTED, not when it is sent
+       * (Wave 4, Chunk 4.3 — the same correction E2E #3 needed).
+       *
+       * The promise is "a drawing is on the projector within five seconds of
+       * the server taking it": everything before that is a 1 MB multipart body
+       * crossing a home connection to Neon, which has been measured at
+       * anywhere from 1 s to 6 s from this machine and is not what a fan-out
+       * budget is for. Upload latency is printed so a regression there is
+       * still visible.
+       */
+      const fanoutStarted = Date.now();
       created.players.push(body.player.id);
       created.avatars.push(body.avatar.id);
       assert.equal(body.avatar.textureHash, TEXTURE_HASH);
@@ -220,7 +232,11 @@ describe('Chunk 3.3 LobbyRoom (real Colyseus + Fastify + Neon + Upstash)', () =>
           'the fan-out must adopt the persisted player id, not clone the person',
         );
       }
-      assert.ok(Date.now() - started < 5000, 'fan-out must land well inside the 5 s budget');
+      const fanoutMs = Date.now() - fanoutStarted;
+      console.log(
+        `[lobby-room] POST /api/avatars: ${fanoutStarted - postStarted}ms · fan-out to both clients: ${fanoutMs}ms`,
+      );
+      assert.ok(fanoutMs < 5000, 'fan-out must land well inside the 5 s budget');
 
       // The explicit broadcast (lets a client prefetch the PNG before the patch).
       for (const [label, box] of [

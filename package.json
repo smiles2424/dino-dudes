@@ -15,6 +15,7 @@
     "e2e": "turbo run build && pnpm --filter @dino/e2e run test",
     "e2e:only": "pnpm --filter @dino/e2e run test",
     "e2e:install": "pnpm --filter @dino/e2e exec playwright install --with-deps chromium",
+    "e2e:cleanup": "node scripts/cleanup-e2e-rows.mjs",
     "validate:connections": "node scripts/validate-connections.mjs",
     "generate-template": "pnpm --filter @dino/pipeline run generate-template"
   },

@@ -140,7 +140,7 @@ its own gate (build + module tests + cumulative `pnpm e2e` green) before the nex
 - **Gate (whole wave):** `[x]` all integration tests green against real Neon + Upstash
   (`pnpm test --force` 67/67); cumulative E2E green (`pnpm e2e` 6/6); `pnpm build` clean.
 
-### Wave 4 — Mobile capture flow & flagship E2E  `[ ] not started` *(3 opus agents, SEQUENTIAL chunks, one branch)*
+### Wave 4 — Mobile capture flow & flagship E2E  `[x] done` *(3 opus agents, SEQUENTIAL chunks, one branch)*
 Branch: `wave-4/integration` — every chunk continues this branch; each chunk gates on
 build + `pnpm test --force` + cumulative `pnpm e2e` before the next launches.
 
@@ -163,12 +163,13 @@ build + `pnpm test --force` + cumulative `pnpm e2e` before the next launches.
       → upload → lands in game view (single browser, real server)
 
 **Chunk 4.3 — flagship E2E** *(1 opus agent)*
-- [ ] **Flagship E2E (Playwright):** desktop browser A creates lobby + watches world; mobile-
+- [x] **Flagship E2E (Playwright):** desktop browser A creates lobby + watches world; mobile-
       emulated browser B joins by code, pushes fixture photo through the REAL pipeline → API →
       Neon → Upstash → Colyseus; assert B's dino appears in A's `window.__world` with expected
       texture hash ≤ 5s; canvas screenshot-diff
-- [ ] Fix anything the flagship shakes out; wire it into CI (skip cleanly without secrets)
-- **Gate (whole wave):** flagship E2E green; full cumulative suite green.
+- [x] Fix anything the flagship shakes out; wire it into CI (skip cleanly without secrets)
+- **Gate (whole wave):** `[x]` flagship E2E green; full cumulative suite green
+  (`pnpm build` clean · `pnpm test --force` 67/67 · `pnpm e2e` 12/12).
 - **Human checkpoint:** real paper-to-screen dry run with 3–5 people.
 
 ### Wave 5 — Hardening & deploy  `[ ] not started` *(optional, 1 opus agent)*
@@ -186,6 +187,34 @@ build + `pnpm test --force` + cumulative `pnpm e2e` before the next launches.
       have the server issue the motion seed + a synced clock so clients compute identical
       trajectories. Validate with an E2E: two browser contexts join one lobby, sample
       `window.__world` positions/headings at the same tick, assert equal within tolerance.
+      **Half-validated by the flagship E2E (Chunk 4.3):** two live clients report *identical*
+      synced positions/headings (worst observed delta `0`), and their frozen canvases are
+      pixel-identical (`?static=1`, 0 of 2560 cells differ). What is still unvalidated is the
+      **wander**, which remains client-local and therefore still drifts between screens once
+      motion starts; only the spawn state agrees. Server-authoritative (or seeded) motion is
+      still the fix, and the flagship already has the assertion waiting for it.
+- [ ] **Every dino must be on screen** *(found by the flagship E2E, Chunk 4.3)*: `spawnFor`
+      places players on a 4–8 m ring around the origin, but the projector camera
+      (`[0.6, 3.6, 11.5]`, 42° fov) only covers ≈±32°, so **~17 % of spawn points fall outside
+      the frame** — roughly one child in six would not see their dinosaur. Fix in Wave 5 by
+      pulling the camera back / widening the fov (re-record E2E #2's baseline) or by shrinking
+      the spawn ring; better still, frame the camera from the actual player count.
+- [x] **The 5 s promise was almost entirely the texture download** *(measured and fixed in
+      Chunk 4.3)*: of an upload→projector time of 1.4–4.4 s the Colyseus patch was ~20 ms and
+      `GET /api/textures/:hash` was 0.8–3.9 s — a ~1 MB PNG fetched from Upstash over the
+      public internet (or Neon on a miss), which occasionally blew the whole budget and
+      sometimes tripped the client's own 4 s `PREFETCH_TIMEOUT_MS` into showing a placeholder
+      dino first. `apps/server/src/texture-cache.ts` now memoises texture bytes in process
+      (LRU over a 48 MB budget, filled by the upload route itself), so the screens' fetch is a
+      memory hit: **3–33 ms, and fan-out 0.07–0.8 s**. Content-addressed keys make it
+      unfalsifiable. Still open for Wave 5: multi-instance deployments warm one memo per
+      instance, and the venue's uplink still carries the *upload*.
+- [ ] **One texture, one owner** *(sharp edge confirmed in Chunk 4.3)*: `avatars.texture_hash`
+      is UNIQUE and `POST /api/avatars` upserts on it, so identical bytes from a second player
+      move the row's `player_id` — and a lobby rebuilt from Postgres then hydrates the robbed
+      player with no drawing. Harmless for real children (nobody draws byte-identical
+      pictures) but it bit two E2E specs that shared a fixture photo. The clean fix is to split
+      the blob (content-addressed, shared) from the wearer record (per player).
 
 ---
 
@@ -538,3 +567,74 @@ Append-only. Every agent adds a line when it finishes (or blocks): `date — wav
   decide whether that budget is measuring the right thing** — `elapsed` spans the POST *plus*
   the fan-out wait while the inner `waitForFunction` gets the full 5 s on its own, so a slow
   upload can bust the assertion even when fan-out was instant.
+- 2026-08-18 — Wave 4 / Chunk 4.3 flagship E2E — **done, wave closed** — branch
+  `wave-4/integration`. **E2E #5 (`e2e/tests/05-flagship.spec.ts`) is the whole product in one
+  test:** a lobby over HTTP, a drawing already in it (run-seeded PNG, request context), a
+  desktop context spectating `/play?lobby=CODE`, and a **Pixel-5-emulated context driving the
+  real capture flow** on `assets/fixtures/photo-02-tilted.png` — pipeline in the browser,
+  `POST /api/avatars`, Neon, Upstash, Colyseus — asserting **B's dino wearing B's exact hash on
+  A's projector inside the 5 s budget**, then B landing in the same world. Measured today:
+  in-browser `processPhoto` 1.0–5.0 s and **upload accepted → dino on the projector 0.07–0.7 s**
+  against the 5 s budget. Getting there was the chunk's biggest find: the fan-out was
+  1.4–4.4 s and **almost all of it was `GET /api/textures/:hash`** (0.8–3.9 s for a ~1 MB PNG
+  from Upstash/Neon over the public internet; the Colyseus patch is ~20 ms), which failed the
+  budget outright on two runs. New `apps/server/src/texture-cache.ts` memoises texture bytes in
+  process — an LRU over a 48 MB budget, filled by `POST /api/avatars` itself, because the
+  screens ask for exactly the bytes this process just accepted. Keys are sha256 of the value,
+  so an entry can never be stale; Redis and Postgres stay behind it. The projector's fetch went
+  to **3–33 ms** and the whole promise now has an order of magnitude of headroom. Three further follow-ups came out
+  of what the flagship measured (spawn ring vs camera frustum, one texture/one owner, and the
+  remaining half of two-client consistency); see *Follow-up checks*.
+  **The budget was measuring the wrong thing (fixed in three places).** `elapsed` used to span
+  the POST *plus* the fan-out; the POST alone is 3.5–6.3 s from this machine, so the assertion
+  failed on connection latency while fan-out was instant. E2E #3, the flagship and the server's
+  `lobby-room.test.mjs` now all start the clock when `POST /api/avatars` **responds** and print
+  the upload time separately. First honest measurement of the thing the budget is about:
+  **fan-out to both clients 0–95 ms** (`lobby-room`, no browser) and **0.8 s** end to end in
+  E2E #3 (which includes the projector fetching the PNG). Not a number change — a change of
+  what is timed, and it immediately exposed the texture-fetch cost above.
+  **`window.__world` is now `version: 2`**: purely additive `players` (`playerId → {x, y, z,
+  heading, modelSlug}`), the state as handed to the renderer, maintained in `WorldView` for
+  live *and* harness mode. It exists so two clients can be compared: the flagship asserts A's
+  and B's synced values agree within float32 tolerance and **observed a worst delta of exactly
+  0** — the first automated evidence for the "two-client world consistency" follow-up (the
+  *wander* is still client-local and still drifts; only spawn state is proven). E2E #2 and #3
+  assert `version === 2` and E2E #2 checks `players` against `world.json` verbatim.
+  **Canvas assertion, and why there is no golden PNG:** spawn positions are server-assigned per
+  run, so no committed baseline can be valid in live mode. Instead both browsers open the same
+  lobby at **`/play?…&static=1`** and their canvases are compared cell by cell (64×40 luminance
+  signature read out of the WebGL buffer, so DOM overlays cannot influence it): a frozen canvas
+  re-sampled 750 ms later is bit-identical (the control — a metric that cannot see change
+  cannot prove agreement), and **the two independent clients differ by 0 of 2560 cells**. Both
+  frames are attached to the Playwright report. `?static=1` on `/play` had never been used and
+  inherited `/play`'s fill-the-projector layout; it now renders the same fixed 800×500 in-flow
+  frame `/debug/world?static=1` does (`PlayPage` + two CSS rules), which is what makes the
+  comparison window-independent. Deliberately **not** asserted: "B's arrival changed N pixels".
+  `spawnFor` rings 4–8 m, the camera covers ≈±32°, and ~17 % of the ring is off-frame, so that
+  assertion is a coin flip — it is a product bug, now a follow-up, not a test threshold.
+  **Neon litter has a cleanup path**: `scripts/cleanup-e2e-rows.mjs` (root `pg` + `dotenv`,
+  `pnpm e2e:cleanup`) deletes only rows whose name matches the anchored e2e tags
+  (`lobbies.name ~ '^e2e [0-9a-f]{8}$'`, `players.name ~ '^e2e-[0-9a-f]{8}'`) plus their
+  avatars/memberships, and Playwright's new `globalTeardown` (`e2e/global-teardown.ts`) spawns
+  it after the last test — so `@dino/e2e` still has no database driver. It prints `SKIP` with no
+  `DATABASE_URL` and swallows any error: housekeeping must never redden a green suite. First
+  run cleared **39 lobbies / 40 players / 26 avatars** left by Waves 3–4.
+  **CI** now passes the four secrets to the E2E step, so the workflow runs the full browser
+  suite including the flagship when they exist and skips cleanly when they do not (verified
+  locally with `.env` moved aside: **9 passed, 3 skipped, exit 0**, cleanup `SKIP`).
+  **Shaken out by the flagship:** (a) the three fan-out budgets above; (b) the texture memo;
+  (c) `/play?static=1`'s layout; (d) **E2E #4 and #5 must not share a fixture photo** — a
+  fixture always yields the same texture bytes, `POST /api/avatars` upserts on the UNIQUE
+  `texture_hash`, and the two specs run in parallel, so whichever uploaded second stole the row
+  and the other's lobby (room disposed, rehydrated from Postgres) came back with no drawing.
+  That is exactly the 4.2 hand-off warning, and it cost one red run before the flagship moved
+  to `photo-02-tilted.png`. `rest-api.test.mjs` also learned to clear the new memo, so its
+  "cache miss → Postgres fallback → cache re-warmed" assertion still tests what it says.
+  **Gate:** `pnpm build` 4/4 · `pnpm test --force` **67/67** (shared 14, server 21, pipeline 32)
+  · `pnpm e2e` **12/12**. Notes for Wave 5 / the human dry run: the projector now serves
+  drawings from memory, so the remaining variable is the *upload* (3.5–6.3 s for ~1 MB from
+  this connection — test the venue's Wi-Fi early, and expect a phone on a bad signal to sit on
+  the spinner); check the camera framing against a real group (~1 in 6 spawns is off-frame
+  today); and E2E #4's `confirm → dino on the game view` is 10–17 s against a 15 s budget,
+  dominated by a cold second page load of a 1.3 MB bundle — code-splitting `/play` is the
+  obvious win and would also make the phone's hand-off feel instant.

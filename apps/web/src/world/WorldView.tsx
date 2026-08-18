@@ -110,8 +110,22 @@ function WorldScene({
   useEffect(() => {
     worldDebug.frozen = frozen;
     worldDebug.dinoCount = players.length;
+    // The state as handed to the renderer — server-assigned in live mode, so
+    // two clients in one lobby must report identical values (see world-debug).
+    worldDebug.players = Object.fromEntries(
+      players.map((player) => [
+        player.id,
+        {
+          x: player.position.x,
+          y: player.position.y,
+          z: player.position.z,
+          heading: player.heading,
+          modelSlug: player.modelSlug,
+        },
+      ]),
+    );
     setWorldStateLoaded(stateLoaded);
-  }, [players.length, frozen, stateLoaded]);
+  }, [players, frozen, stateLoaded]);
 
   return (
     <>

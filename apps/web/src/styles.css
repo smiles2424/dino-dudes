@@ -170,8 +170,17 @@ dd {
   inset: 0;
 }
 
+/* Screenshot mode: the world-frame leaves the "fill the projector" layout and
+   becomes an in-flow, fixed-size box (sized inline by PlayPage), so the canvas
+   is identical on any window — the same rule /debug/world?static=1 follows. */
 .play--static {
   min-height: 0;
+  overflow: visible;
+}
+
+.play--static .world-frame {
+  position: relative;
+  inset: auto;
 }
 
 .play-banner {

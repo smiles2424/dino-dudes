@@ -10,8 +10,24 @@
 /** Texture lifecycle for one player, as the renderer sees it. */
 export type TextureStatus = 'none' | 'loading' | 'applied' | 'error';
 
+/**
+ * Where one dino stands, exactly as the state the renderer was handed says —
+ * server-assigned and synchronized in live mode, straight from the JSON in the
+ * harness. Deliberately NOT the animated transform: the wander is client-local
+ * (each page seeds it from the player id and times it from its own load clock),
+ * so only these values can be compared across two clients.
+ */
+export interface WorldDebugPlayer {
+  x: number;
+  y: number;
+  z: number;
+  /** Y-axis rotation in radians. */
+  heading: number;
+  modelSlug: string;
+}
+
 export interface WorldDebug {
-  /** Bumped if the shape below ever changes. */
+  /** Bumped if the shape below ever changes. `2` added {@link WorldDebug.players}. */
   readonly version: number;
   /** True once the state is loaded and every requested texture has resolved. */
   ready: boolean;
@@ -19,6 +35,11 @@ export interface WorldDebug {
   frozen: boolean;
   /** Number of dinos currently mounted in the scene. */
   dinoCount: number;
+  /**
+   * `playerId → position/heading` as synchronized (Wave 4, Chunk 4.3). Lets a
+   * test prove two browsers in one lobby are looking at the *same* world.
+   */
+  players: Record<string, WorldDebugPlayer>;
   /** `playerId → textureHash` for textures ACTUALLY applied to a material. */
   appliedTextures: Record<string, string>;
   /** `playerId → status`, including the ones still in flight. */
@@ -47,10 +68,11 @@ declare global {
 }
 
 export const worldDebug: WorldDebug = {
-  version: 1,
+  version: 2,
   ready: false,
   frozen: false,
   dinoCount: 0,
+  players: {},
   appliedTextures: {},
   textureStatus: {},
   pendingTextures: 0,

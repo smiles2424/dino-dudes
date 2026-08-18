@@ -26,6 +26,7 @@ pnpm dev               # server on :2567, web on :5173
 | `pnpm test` | Module tests (`node --test`) for shared + pipeline |
 | `pnpm e2e` | Builds, then runs the cumulative Playwright suite headless |
 | `pnpm e2e:only` | Playwright without rebuilding (needs a prior `pnpm build`) |
+| `pnpm e2e:cleanup` | Deletes the `e2e-…`-tagged rows the browser suite leaves in Neon (Playwright runs it automatically after every suite; no-ops without `DATABASE_URL`) |
 | `pnpm validate:connections` | `SELECT 1` against Neon (pooled + unpooled) and `PING` against Upstash |
 | `pnpm generate-template` | Writes printable SVG + PDF templates into `assets/templates/` |
 

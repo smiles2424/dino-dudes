@@ -42,6 +42,12 @@ interface PlayParams {
   frozen: boolean;
 }
 
+/**
+ * Screenshot mode renders at a fixed size, exactly as `/debug/world?static=1`
+ * does, so a canvas assertion never depends on the window (Chunk 4.3).
+ */
+const STATIC_SIZE = { width: 800, height: 500 };
+
 const STATUS_LABEL = {
   connecting: 'Connecting…',
   connected: 'Live',
@@ -72,7 +78,11 @@ export function PlayPage(): JSX.Element {
 
   return (
     <main className={params.frozen ? 'play play--static' : 'play'} data-testid="play-view">
-      <div className="world-frame" data-testid="world-frame">
+      <div
+        className="world-frame"
+        data-testid="world-frame"
+        style={params.frozen ? { width: STATIC_SIZE.width, height: STATIC_SIZE.height } : undefined}
+      >
         <WorldView
           players={lobby.players}
           resolveTextureUrl={textureUrlFor}

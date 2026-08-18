@@ -58,6 +58,11 @@ interface WorldDebugSnapshot {
   ready: boolean;
   frozen: boolean;
   dinoCount: number;
+  /** Added in `version: 2` — synced position/heading, per player id. */
+  players: Record<
+    string,
+    { x: number; y: number; z: number; heading: number; modelSlug: string }
+  >;
   appliedTextures: Record<string, string>;
   textureErrors: Record<string, string>;
   pendingTextures: number;
@@ -108,9 +113,20 @@ test('the world harness renders every dino and applies every texture', async ({ 
 
   const world = (await page.evaluate(() => ({ ...window.__world }))) as WorldDebugSnapshot;
 
-  expect(world.version).toBe(1);
+  expect(world.version).toBe(2);
   expect(world.frozen).toBe(true);
   expect(world.dinoCount).toBe(players.length);
+  // `players` mirrors the state the renderer was handed, verbatim.
+  expect(Object.keys(world.players).sort()).toEqual(players.map((p) => p.id).sort());
+  for (const player of players) {
+    expect(world.players[player.id]).toEqual({
+      x: player.position.x,
+      y: player.position.y,
+      z: player.position.z,
+      heading: player.heading,
+      modelSlug: player.modelSlug,
+    });
+  }
   expect(world.appliedTextures).toEqual(expectedApplied);
   expect(world.textureErrors).toEqual({});
   expect(world.pendingTextures).toBe(0);
