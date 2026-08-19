@@ -172,17 +172,24 @@ build + `pnpm test --force` + cumulative `pnpm e2e` before the next launches.
   (`pnpm build` clean · `pnpm test --force` 67/67 · `pnpm e2e` 12/12).
 - **Human checkpoint:** real paper-to-screen dry run with 3–5 people.
 
-### Wave 5 — Hardening & deploy  `[ ] not started` *(3 opus agents, SEQUENTIAL chunks, one branch)*
+### Wave 5 — Hardening & deploy  `[~] in progress (5.1 done)` *(3 opus agents, SEQUENTIAL chunks, one branch)*
 Branch: `wave-5/hardening` — each chunk gates on build + `pnpm test --force` + cumulative
 `pnpm e2e` before the next launches. This wave also closes the open Follow-up checks below.
 
 **Chunk 5.1 — world sync & framing** *(1 opus agent)*
-- [ ] Server-seeded motion: wander computed from server-issued seed + server clock so every
+- [x] Server-seeded motion: wander computed from server-issued seed + server clock so every
       client renders identical trajectories (closes the "two-client world consistency"
       follow-up); upgrade the flagship's position assertion to sample DURING motion
-- [ ] Every dino on screen: fix the ~17% off-frustum spawns (camera framing from player
+      — *room state carries `motionSeed`/`motionEpoch`/`serverTime` (500 ms tick); the flagship
+      measures 0–1 ms clock skew and 1–5 mm between the two clients' moving dinos.*
+- [x] Every dino on screen: fix the ~17% off-frustum spawns (camera framing from player
       count, wider fov, or smaller ring); re-record affected screenshot baselines
-- [ ] `/debug/world` harness keeps working (E2E #2) — deterministic static mode preserved
+      — *`world/camera-fit.ts` dollies (then widens) the projector shot until every dino's whole
+      reachable box is framed; E2E #2 proves it for 12 dinos on the full ring, landscape and
+      portrait; `world-static.png` re-recorded.*
+- [x] `/debug/world` harness keeps working (E2E #2) — deterministic static mode preserved
+      — *harness still times its own wander (`motion.source === 'local'`), `?static=1` still t=0
+      at DPR 1 in a fixed 800×500 frame; new `?size=WxH` renders any aspect for the framing test.*
 
 **Chunk 5.2 — data & robustness** *(1 opus agent)*
 - [ ] Split texture blob (content-addressed, shared) from wearer record (per player) —
@@ -201,7 +208,7 @@ Branch: `wave-5/hardening` — each chunk gates on build + `pnpm test --force` +
 
 ## Follow-up checks (validate before the event)
 
-- [ ] **Two-client world consistency** *(raised by human 2026-08-18 after the Wave 2 art
+- [x] **Two-client world consistency** *(raised by human 2026-08-18 after the Wave 2 art
       review)*: two browsers in the SAME lobby must see the SAME world — dino positions and
       orientations in sync. `/debug/world` drifts across instances today by design (wander is
       seeded locally and timed from each page's own load clock; the harness has no backend).
@@ -215,12 +222,20 @@ Branch: `wave-5/hardening` — each chunk gates on build + `pnpm test --force` +
       **wander**, which remains client-local and therefore still drifts between screens once
       motion starts; only the spawn state agrees. Server-authoritative (or seeded) motion is
       still the fix, and the flagship already has the assertion waiting for it.
-- [ ] **Every dino must be on screen** *(found by the flagship E2E, Chunk 4.3)*: `spawnFor`
+      **CLOSED in Chunk 5.1:** the room now issues `motionSeed` + `motionEpoch` and reposts
+      `serverTime` every 500 ms; clients evaluate the wander at *server* time, and the flagship
+      measures clock skew 0–1 ms, identical trajectories (delta exactly 0 at an agreed future
+      instant) and 1–5 mm between the two browsers' *moving* dinos sampled together.
+- [x] **Every dino must be on screen** *(found by the flagship E2E, Chunk 4.3)*: `spawnFor`
       places players on a 4–8 m ring around the origin, but the projector camera
       (`[0.6, 3.6, 11.5]`, 42° fov) only covers ≈±32°, so **~17 % of spawn points fall outside
       the frame** — roughly one child in six would not see their dinosaur. Fix in Wave 5 by
       pulling the camera back / widening the fov (re-record E2E #2's baseline) or by shrinking
       the spawn ring; better still, frame the camera from the actual player count.
+      **CLOSED in Chunk 5.1:** the camera is fitted to the live world — `world/camera-fit.ts`
+      dollies the hand-tuned shot back (and, only for a portrait phone, widens the lens) until
+      every dino's whole *reachable* box is in frame; `window.__world.offscreen` must be 0 and
+      E2E #2 proves it for 12 dinos on the full 4–8 m ring at 1.78 and 0.50 aspect.
 - [x] **The 5 s promise was almost entirely the texture download** *(measured and fixed in
       Chunk 4.3)*: of an upload→projector time of 1.4–4.4 s the Colyseus patch was ~20 ms and
       `GET /api/textures/:hash` was 0.8–3.9 s — a ~1 MB PNG fetched from Upstash over the
@@ -660,3 +675,58 @@ Append-only. Every agent adds a line when it finishes (or blocks): `date — wav
   today); and E2E #4's `confirm → dino on the game view` is 10–17 s against a 15 s budget,
   dominated by a cold second page load of a 1.3 MB bundle — code-splitting `/play` is the
   obvious win and would also make the phone's hand-off feel instant.
+- 2026-08-19 — Wave 5 / Chunk 5.1 world sync & framing — **done** — branch `wave-5/hardening`.
+  **Motion is now shared, not merely identical-looking.** `LobbyState` gained three additive
+  fields (`motionSeed`, `motionEpoch`, `serverTime`; `LobbyStateSchema` mirrors them with
+  defaults so an older server still parses): the room mints one seed per lobby, records the
+  epoch motion time counts from, and rewrites `serverTime` every `SERVER_TIME_TICK_MS` (500 ms)
+  from `this.clock.setInterval` — which fires immediately *before* each patch is serialized, so
+  the value a client receives is one network hop stale, not one tick. **The epochs are
+  `float64` on purpose**: Colyseus's `'number'` degrades to float32 for large values, which
+  quantises a ~1.8e12 ms timestamp into ~131 s steps and would have made the whole scheme
+  useless; `lobby-room.test.mjs` watches a tick land (~500 ms, never 0 or 131 072) to prove ms
+  precision survives the wire. Each client estimates its offset as the **largest**
+  `serverTime - Date.now()` it has seen (a page busy compiling shaders processes a patch late,
+  which reads as an offset that is too small; every later sample can only correct it upward),
+  then evaluates the wander at `Date.now() + offset - epoch`. Wander parameters are hashed from
+  `seed:playerId` instead of `playerId`, so the trajectory is a pure function of state.
+  Measured by the flagship, repeatedly: **clock skew between the two browsers 0–1 ms**,
+  **identical trajectories (delta exactly `0` when both are asked for B's pose at an agreed
+  future instant)** and **1–5 mm between the two clients' *moving* dinos** sampled at the same
+  wall-clock moment (budget 0.35 m; the pre-Wave-5 behaviour was metres apart). That closes the
+  "two-client world consistency" follow-up with the dinosaurs walking. `/debug/world` passes no
+  motion source and keeps its page-local clock (`motion.source === 'local'`), and `?static=1`
+  is untouched: t = 0, DPR 1, fixed 800×500.
+  **Every dino is on screen.** New `apps/web/src/world/camera-fit.ts` keeps the hand-tuned
+  projector angle and dollies it back (≤3×) until every dino's whole *reachable* box —
+  `motionBounds()`, the exact interval the wander can visit, at foot and head height — is inside
+  the frustum with a 12 % margin; only if that saturates (a phone in portrait, whose horizontal
+  field is far too narrow for a 16 m world) does it widen the lens, up to 80°. It is pure,
+  clamped at 1× (a one-dino lobby looks exactly as before) and quantised, so two clients holding
+  one state compute one camera — which is what keeps the flagship's cross-client canvas
+  comparison meaningful (still **0 of 2560 cells differ**). Wander amplitudes were trimmed
+  (max excursion ~2.6 m rather than ~4.6 m) so framing a full lobby does not turn the animals
+  into specks. Verified by a new E2E #2 test on a new fixture `public/debug/world-crowd.json` —
+  **12 dinos on the full 4–8 m spawn ring, sampled every 0.25 s across a whole 60 s wander
+  period**, at 1.78 aspect (projector: camera `[0.924, 4.842, 17.71]`, fov 42) and 0.50 aspect
+  (phone: camera `[1.8, 8.2, 34.5]`, fov 68) — plus `window.__world.offscreen === 0` asserted
+  live in E2E #2, #3 and the flagship.
+  **`window.__world` is now `version: 3`** (additive): `poses` (the *animated* transform per
+  player, rewritten every frame, each carrying the motion time it was evaluated at), `motion`
+  (`source`/`seed`/`epoch`/`offsetMs`/`samples`), `camera` (the fitted shot + canvas aspect),
+  `offscreen`, `motionTime()` and the analytical hooks `poseAtTime(id, t)` /
+  `playerOnScreen(id, t)`. E2E #2/#3/#5 assert `version === 3`. `/debug/world` also gained
+  `?size=WxH`, which pins the canvas to an exact size (the camera fits itself to the canvas
+  *aspect*, and the page's own CSS never produces a phone-shaped frame).
+  **Baseline re-recorded**: `e2e/tests/__screenshots__/02-world.spec.ts/world-static.png` — the
+  harness camera legitimately moved from `[0.6, 3.6, 11.5]` to `[0.702, 3.991, 13.455]` because
+  the fit now guarantees the bronto at (7.2, −6.2) stays framed for its whole wander. Recorded
+  on Windows/SwiftShader as before; re-record with `pnpm e2e:only -- --update-snapshots` if a
+  future change moves it again.
+  **Gate:** `pnpm build` 4/4 · `pnpm test --force` **68/68** node (shared 14, server **22**,
+  pipeline 32) · `pnpm e2e` **14/14** (two new framing tests). Notes for Chunk 5.2: (a) the
+  room's `move` message is still the only path that can move a dino authoritatively and still
+  nobody sends one — motion stays a client-side function of synced state, which is what makes
+  it free; (b) `SERVER_TIME_TICK_MS` is 2 tiny patches/second per room, worth remembering when
+  the loadtest puts ~50 clients in one lobby; (c) `spawnFor`'s 4–8 m ring is unchanged, so
+  nothing about lobby data moved — 5.2's texture/lifecycle work does not touch any of this.

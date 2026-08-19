@@ -49,6 +49,15 @@ declare global {
   interface Window {
     __world?: WorldDebugSnapshot & {
       setTexture?: (playerId: string, textureHash: string) => void;
+      /** `version: 3` — current motion time in seconds on the shared clock. */
+      motionTime?: () => number;
+      /** `version: 3` — the pose this client would render at time `t`. */
+      poseAtTime?: (
+        playerId: string,
+        t: number,
+      ) => { x: number; y: number; z: number; rotationY: number; t: number } | null;
+      /** `version: 3` — is this dino fully in frame at motion time `t`? */
+      playerOnScreen?: (playerId: string, t: number) => boolean | null;
     };
   }
 }
@@ -63,6 +72,28 @@ interface WorldDebugSnapshot {
     string,
     { x: number; y: number; z: number; heading: number; modelSlug: string }
   >;
+  /** Added in `version: 3` — the ANIMATED transform, rewritten every frame. */
+  poses: Record<
+    string,
+    { x: number; y: number; z: number; rotationY: number; t: number }
+  >;
+  /** Added in `version: 3` — how this page is timing the wander. */
+  motion: {
+    source: 'server' | 'local';
+    seed: string;
+    epoch: number;
+    offsetMs: number;
+    samples: number;
+  };
+  /** Added in `version: 3` — the shot after fit-to-bounds framing. */
+  camera: {
+    position: [number, number, number];
+    target: [number, number, number];
+    fov: number;
+    aspect: number;
+  };
+  /** Added in `version: 3` — dinos outside the viewport. Must be 0. */
+  offscreen: number;
   appliedTextures: Record<string, string>;
   textureErrors: Record<string, string>;
   pendingTextures: number;
@@ -113,8 +144,10 @@ test('the world harness renders every dino and applies every texture', async ({ 
 
   const world = (await page.evaluate(() => ({ ...window.__world }))) as WorldDebugSnapshot;
 
-  expect(world.version).toBe(2);
+  expect(world.version).toBe(3);
   expect(world.frozen).toBe(true);
+  // No server here, so the harness times its own wander (Wave 5, Chunk 5.1).
+  expect(world.motion.source).toBe('local');
   expect(world.dinoCount).toBe(players.length);
   // `players` mirrors the state the renderer was handed, verbatim.
   expect(Object.keys(world.players).sort()).toEqual(players.map((p) => p.id).sort());
@@ -177,6 +210,107 @@ test('the frozen world canvas matches the committed baseline', async ({ page }) 
   // The baseline was recorded on Windows/SwiftShader. If a future renderer or
   // browser bump makes this drift everywhere at once, re-record it with
   // `pnpm e2e:only -- --update-snapshots` and eyeball the new PNG in the diff.
+});
+
+/**
+ * PLAN.md's "every dino must be on screen" follow-up, as an assertion.
+ *
+ * The camera is fitted to the world (`world/camera-fit.ts`): it keeps the
+ * hand-tuned projector angle and dollies back until every dino's whole
+ * *reachable* box is inside the frustum. So this samples a full wander period —
+ * the slowest dino here needs ≈39 s to close its orbit — rather than trusting
+ * whatever instant the test happened to catch, and it does so through the same
+ * projection three.js renders with.
+ */
+test('every dino stays inside the frame, for every moment of its wander', async ({ page }) => {
+  await openWorld(page);
+
+  const camera = await page.evaluate(() => window.__world?.camera);
+  expect(camera, 'the world reports the shot it framed').toBeTruthy();
+
+  const offFrame = await page.evaluate((ids) => {
+    const missed: string[] = [];
+    for (const id of ids) {
+      // 0.25 s steps over 60 s: more than one full orbit for the slowest dino.
+      for (let t = 0; t <= 60; t += 0.25) {
+        if (window.__world?.playerOnScreen?.(id, t) !== true) {
+          missed.push(`${id}@${t.toFixed(2)}s`);
+          break;
+        }
+      }
+    }
+    return missed;
+  }, players.map((player) => player.id));
+
+  expect(offFrame, 'no dinosaur may ever leave the frame').toEqual([]);
+  console.log(
+    `[e2e#2] framing: camera ${JSON.stringify(camera?.position)} fov ${camera?.fov} ` +
+      `covers all ${players.length} dinos for a full wander period`,
+  );
+
+  // …and the live view agrees with the maths, frame by frame.
+  await page.goto('/debug/world');
+  await page.waitForFunction(() => (window.__world?.frames ?? 0) > 5, undefined, {
+    timeout: 25_000,
+  });
+  expect(await page.evaluate(() => window.__world?.offscreen)).toBe(0);
+});
+
+/**
+ * The venue case, without needing a venue: a **full lobby on the spawn ring**.
+ *
+ * `spawnFor` places players 4–8 m from the origin, which is the geometry that
+ * used to put ~17 % of them outside the frame. `world-crowd.json` is twelve
+ * dinos on exactly that ring — including the four cardinal points at the full
+ * 8 m — rendered by the same harness, with no server needed.
+ *
+ * Both viewports matter: a landscape projector, and the **portrait phone** that
+ * lands on `/play` after uploading. A portrait frustum is so narrow
+ * horizontally that dollying alone cannot contain a 16 m field, which is why
+ * the fit widens the lens once the dolly saturates.
+ */
+test('every dino stays inside the frame with a full lobby on the spawn ring', async ({ page }) => {
+  const crowd = LobbyStateSchema.parse(
+    JSON.parse(readFileSync(path.join(debugDir, 'world-crowd.json'), 'utf8')),
+  );
+  const crowdIds = Object.values(crowd.players).map((player) => player.id);
+
+  for (const viewport of [
+    { width: 960, height: 540 }, // a projector
+    { width: 380, height: 760 }, // a phone, portrait
+  ]) {
+    await page.goto(
+      `/debug/world?state=/debug/world-crowd.json&size=${viewport.width}x${viewport.height}`,
+    );
+    await page.waitForFunction(
+      (expected) =>
+        window.__world?.dinoCount === expected && (window.__world?.frames ?? 0) > 3,
+      crowdIds.length,
+      { timeout: 25_000 },
+    );
+
+    const missed = await page.evaluate((ids) => {
+      const off: string[] = [];
+      for (const id of ids) {
+        for (let t = 0; t <= 60; t += 0.25) {
+          if (window.__world?.playerOnScreen?.(id, t) !== true) {
+            off.push(`${id}@${t.toFixed(2)}s`);
+            break;
+          }
+        }
+      }
+      return off;
+    }, crowdIds);
+    const camera = await page.evaluate(() => window.__world?.camera);
+    console.log(
+      `[e2e#2] framing ${viewport.width}×${viewport.height} (canvas aspect ` +
+        `${camera?.aspect.toFixed(2)}): ${crowdIds.length} dinos on the 4–8 m ring → camera ` +
+        `${JSON.stringify(camera?.position)} fov ${camera?.fov}`,
+    );
+
+    expect(missed, `nobody may be off frame at ${viewport.width}×${viewport.height}`).toEqual([]);
+    expect(await page.evaluate(() => window.__world?.offscreen)).toBe(0);
+  }
 });
 
 test('the world idles when live and is perfectly frozen under ?static=1', async ({ page }) => {

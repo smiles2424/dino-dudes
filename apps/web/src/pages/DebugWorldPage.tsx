@@ -9,6 +9,9 @@
  * Query parameters
  *   ?static=1        freeze motion at t = 0, pin DPR/AA, fixed-size canvas —
  *                    the mode screenshots are taken in.
+ *   ?size=800x500    render the canvas at exactly this size, whatever the
+ *                    window is — the camera fits itself to the canvas aspect,
+ *                    and this is how a test exercises a phone-shaped frame.
  *   ?state=/path     load a different same-origin state JSON (default
  *                    `/debug/world.json`).
  *
@@ -31,7 +34,7 @@ const TEXTURE_DIR = '/debug/textures';
 const STATIC_SIZE = { width: 800, height: 500 };
 
 export function DebugWorldPage(): JSX.Element {
-  const { frozen, stateUrl } = useMemo(readParams, []);
+  const { frozen, stateUrl, size } = useMemo(readParams, []);
   const [state, setState] = useState<LobbyState | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** playerId → hash, applied on top of the JSON (runtime swap). */
@@ -79,11 +82,19 @@ export function DebugWorldPage(): JSX.Element {
   );
 
   return (
-    <main className={frozen ? 'debug-world debug-world--static' : 'debug-world'}>
+    <main
+      className={
+        frozen
+          ? 'debug-world debug-world--static'
+          : size
+            ? 'debug-world debug-world--pinned'
+            : 'debug-world'
+      }
+    >
       <div
         className="world-frame"
         data-testid="world-frame"
-        style={frozen ? { width: STATIC_SIZE.width, height: STATIC_SIZE.height } : undefined}
+        style={size ?? (frozen ? STATIC_SIZE : undefined)}
       >
         {error ? (
           <p className="error" data-testid="world-error">
@@ -121,10 +132,24 @@ export function DebugWorldPage(): JSX.Element {
   );
 }
 
-function readParams(): { frozen: boolean; stateUrl: string } {
+function readParams(): {
+  frozen: boolean;
+  stateUrl: string;
+  size: { width: number; height: number } | null;
+} {
   const params = new URLSearchParams(window.location.search);
   const requested = params.get('state');
   // Same-origin paths only — this page is shipped to production.
   const stateUrl = requested && requested.startsWith('/') ? requested : DEFAULT_STATE_URL;
-  return { frozen: params.get('static') === '1', stateUrl };
+  /*
+   * `?size=WxH` pins the canvas to an exact pixel size (Wave 5, Chunk 5.1).
+   * The camera frames itself from the canvas *aspect*, and the shape that
+   * needs proving is a phone in portrait — which this page's own CSS never
+   * produces. Capped so a typo cannot ask the GPU for a 100 000 px buffer.
+   */
+  const match = /^(\d{2,4})x(\d{2,4})$/.exec(params.get('size') ?? '');
+  const size = match
+    ? { width: Number(match[1]), height: Number(match[2]) }
+    : null;
+  return { frozen: params.get('static') === '1', stateUrl, size };
 }

@@ -185,6 +185,53 @@ describe('Chunk 3.3 LobbyRoom (real Colyseus + Fastify + Neon + Upstash)', () =>
   });
 
   test(
+    'the room publishes a shared motion clock both clients agree on',
+    { skip: skipPg },
+    async () => {
+      const a = clientA.state.toJSON();
+      const b = clientB.state.toJSON();
+
+      // One seed per lobby, identical for everyone watching it: the clients
+      // hash it with each player id to derive that dino's wander (Chunk 5.1).
+      assert.match(a.motionSeed, /^[0-9a-f]{16}$/, `motionSeed was ${a.motionSeed}`);
+      assert.equal(b.motionSeed, a.motionSeed, 'both clients must get one seed');
+      assert.equal(b.motionEpoch, a.motionEpoch, 'both clients must get one epoch');
+      assert.ok(
+        Math.abs(a.motionEpoch - Date.now()) < 60_000,
+        `motionEpoch ${a.motionEpoch} is not this server's clock`,
+      );
+
+      /*
+       * The whole scheme rests on millisecond precision surviving the wire.
+       * Colyseus's `'number'` is float32 for large values, which quantises a
+       * ~1.8e12 epoch to steps of ~131 s — hence `float64` in `LobbyRoom`.
+       * Watching one tick land proves it: a quantised field would advance by
+       * either 0 or 131 072 ms, never by the ~1 s the room actually waits.
+       */
+      const first = clientA.state.toJSON().serverTime;
+      assert.ok(first > 0, 'serverTime must be published');
+      const advanced = await waitFor(
+        'serverTime to tick',
+        () => {
+          const now = clientA.state.toJSON().serverTime;
+          return now > first ? now : undefined;
+        },
+        6000,
+      );
+      const step = advanced - first;
+      assert.ok(step >= 200 && step <= 3000, `serverTime advanced by ${step}ms, expected ~1000ms`);
+      assert.ok(
+        Math.abs(advanced - Date.now()) < 2000,
+        `serverTime ${advanced} is ${Math.abs(advanced - Date.now())}ms from this process's clock`,
+      );
+
+      // …and a client can parse all of it through the frozen contract.
+      const parsed = LobbyStateSchema.parse(clientB.state.toJSON());
+      assert.equal(parsed.motionSeed, a.motionSeed);
+    },
+  );
+
+  test(
     'an avatar POSTed over HTTP reaches BOTH clients within the timeout',
     { skip: skipPg },
     async () => {

@@ -13,9 +13,8 @@ export type TextureStatus = 'none' | 'loading' | 'applied' | 'error';
 /**
  * Where one dino stands, exactly as the state the renderer was handed says —
  * server-assigned and synchronized in live mode, straight from the JSON in the
- * harness. Deliberately NOT the animated transform: the wander is client-local
- * (each page seeds it from the player id and times it from its own load clock),
- * so only these values can be compared across two clients.
+ * harness. This is the *home* position, not the animated transform; for the
+ * latter see {@link WorldDebug.poses}.
  */
 export interface WorldDebugPlayer {
   x: number;
@@ -26,8 +25,53 @@ export interface WorldDebugPlayer {
   modelSlug: string;
 }
 
+/**
+ * The **animated** transform of one dino, rewritten every frame (Wave 5,
+ * Chunk 5.1). In a live lobby the wander is derived from the room's motion seed
+ * and the server's clock, so two browsers must report the same values here at
+ * the same wall-clock moment — that is what closes PLAN.md's "two-client world
+ * consistency" follow-up with the dinos actually moving.
+ */
+export interface WorldDebugPose {
+  x: number;
+  y: number;
+  z: number;
+  /** Y-axis rotation in radians. */
+  rotationY: number;
+  /** The motion time (seconds) this pose was evaluated at. */
+  t: number;
+}
+
+/** How this page is timing the wander. */
+export interface WorldDebugMotion {
+  /** `server` once a room supplied a seed + epoch; `local` in the harness. */
+  source: 'server' | 'local';
+  /** The lobby's motion seed (`''` when local). */
+  seed: string;
+  /** Server-clock epoch motion time is measured from (0 when local). */
+  epoch: number;
+  /** Estimated `serverClock - localClock`, in ms (0 when local). */
+  offsetMs: number;
+  /** How many `serverTime` samples the offset has been refined from. */
+  samples: number;
+}
+
+/** The shot the world is being rendered from, after fit-to-bounds. */
+export interface WorldDebugCamera {
+  position: [number, number, number];
+  target: [number, number, number];
+  fov: number;
+  /** Canvas aspect the fit was computed for. */
+  aspect: number;
+}
+
 export interface WorldDebug {
-  /** Bumped if the shape below ever changes. `2` added {@link WorldDebug.players}. */
+  /**
+   * Bumped if the shape below ever changes. `2` added
+   * {@link WorldDebug.players}; `3` added {@link WorldDebug.poses},
+   * {@link WorldDebug.motion}, {@link WorldDebug.camera},
+   * {@link WorldDebug.offscreen} and {@link WorldDebug.motionTime}.
+   */
   readonly version: number;
   /** True once the state is loaded and every requested texture has resolved. */
   ready: boolean;
@@ -40,6 +84,17 @@ export interface WorldDebug {
    * test prove two browsers in one lobby are looking at the *same* world.
    */
   players: Record<string, WorldDebugPlayer>;
+  /** `playerId → animated transform`, updated every rendered frame. */
+  poses: Record<string, WorldDebugPose>;
+  /** How the wander is being timed. */
+  motion: WorldDebugMotion;
+  /** The camera the scene is rendered from. */
+  camera: WorldDebugCamera;
+  /**
+   * How many dinos are currently outside the viewport — the number PLAN.md's
+   * "every dino must be on screen" follow-up is about. Must be 0.
+   */
+  offscreen: number;
   /** `playerId → textureHash` for textures ACTUALLY applied to a material. */
   appliedTextures: Record<string, string>;
   /** `playerId → status`, including the ones still in flight. */
@@ -55,6 +110,25 @@ export interface WorldDebug {
   /** Frames rendered since load — proves the canvas is actually drawing. */
   frames: number;
   /**
+   * The current motion time in seconds: `(serverNow - epoch) / 1000` in a live
+   * lobby, the r3f clock in the harness. Two synced clients must agree.
+   */
+  motionTime: () => number;
+  /**
+   * The pose this client computes for `playerId` at motion time `t` —
+   * analytical, so it answers for any `t` even on a page whose clock is frozen.
+   * Deterministic and frame-independent, so two clients can be compared without
+   * either of them having to be sampled at the same instant.
+   */
+  poseAtTime?: (playerId: string, t: number) => WorldDebugPose | null;
+  /**
+   * Would this dino be completely inside the frame at motion time `t` (feet
+   * and head)? `null` if the player is unknown. Sampling it across a whole
+   * wander period is how a test proves "every dino on screen" holds at every
+   * instant rather than at the one it happened to look.
+   */
+  playerOnScreen?: (playerId: string, t: number) => boolean | null;
+  /**
    * Harness-only hook: repoint one player at another texture hash at runtime,
    * exactly as a Colyseus `avatar-updated` message will in Wave 3. Installed
    * by `/debug/world`; undefined elsewhere.
@@ -67,12 +141,23 @@ declare global {
   var __world: WorldDebug | undefined;
 }
 
+/** Replaced by `<WorldView>` on every render; called by {@link motionTime}. */
+let motionTimeSource: () => number = () => 0;
+
+export function setMotionTimeSource(source: () => number): void {
+  motionTimeSource = source;
+}
+
 export const worldDebug: WorldDebug = {
-  version: 2,
+  version: 3,
   ready: false,
   frozen: false,
   dinoCount: 0,
   players: {},
+  poses: {},
+  motion: { source: 'local', seed: '', epoch: 0, offsetMs: 0, samples: 0 },
+  camera: { position: [0, 0, 0], target: [0, 0, 0], fov: 0, aspect: 0 },
+  offscreen: 0,
   appliedTextures: {},
   textureStatus: {},
   pendingTextures: 0,
@@ -80,6 +165,7 @@ export const worldDebug: WorldDebug = {
   geometryBuilds: 0,
   materialBuilds: 0,
   frames: 0,
+  motionTime: () => motionTimeSource(),
 };
 
 if (typeof window !== 'undefined') {

@@ -1,22 +1,37 @@
 /**
  * The shared 3D world: ground, sky, light, and N dinos rendered straight from
- * a state object (the same shape Colyseus will sync in Wave 3).
+ * a state object (the same shape Colyseus syncs).
  *
  * Determinism rules, because this canvas is a screenshot assertion surface:
- *   • no `Math.random()` — every wobble comes from the player id;
+ *   • no `Math.random()` — every wobble comes from the lobby's motion seed and
+ *     the player id, and its *time* comes from the server (Wave 5, Chunk 5.1),
+ *     so two browsers watching one lobby render the same frame while the dinos
+ *     are moving;
  *   • no text inside the canvas — nameplates are DOM (drei `<Html>`), so OS
  *     font rasterisation can never move a pixel of the render;
  *   • `frozen` (from `?static=1`) stops the clock at t = 0, disables the
  *     orbit controls, pins DPR to 1 and turns MSAA off.
+ *
+ * The camera frames itself (Wave 5, Chunk 5.1): the classic projector shot is
+ * dollied back until every dino's *reachable* area is inside the frustum, so
+ * nobody's dinosaur is off screen — see `camera-fit.ts`.
  */
-import { useEffect, useLayoutEffect, useMemo } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
-import { BackSide } from 'three';
+import { BackSide, PerspectiveCamera, Vector3 } from 'three';
 import type { PlayerState } from '@dino/shared';
 import { Dino } from './Dino.js';
+import { dinoHeight } from './dino-geometry.js';
+import { fitShotToPoints, type CameraShot, type Point3 } from './camera-fit.js';
 import { makeCheckerTexture, makeGradientTexture } from './textures.js';
-import { refreshWorldReadiness, setWorldStateLoaded, worldDebug } from './world-debug.js';
+import { motionBounds, poseAt, type MotionSource } from './world-motion.js';
+import {
+  refreshWorldReadiness,
+  setMotionTimeSource,
+  setWorldStateLoaded,
+  worldDebug,
+} from './world-debug.js';
 
 export interface WorldViewProps {
   players: readonly PlayerState[];
@@ -28,17 +43,28 @@ export interface WorldViewProps {
   stateLoaded?: boolean;
   className?: string;
   /**
+   * The shared motion clock of a live lobby. Omitted by `/debug/world`, which
+   * has no server and keeps timing the wander from its own page clock.
+   */
+  motion?: MotionSource;
+  /**
    * Camera override (added Chunk 4.2 for the capture flow's single-dino
-   * preview, which needs a close-up). Both default to the wide projector shot
-   * `/play` and `/debug/world` use, so the screenshot baseline is untouched.
+   * preview, which needs a close-up). Supplying either one also switches the
+   * fit-to-bounds framing off: the preview knows exactly what it wants to show.
    */
   cameraPosition?: readonly [number, number, number];
   cameraTarget?: readonly [number, number, number];
 }
 
-const CAMERA_POSITION: [number, number, number] = [0.6, 3.6, 11.5];
-const CAMERA_TARGET: [number, number, number] = [0, 1.3, 0];
+/** The hand-tuned projector shot. Fit-to-bounds only ever dollies it back. */
+const BASE_SHOT: CameraShot = {
+  position: [0.6, 3.6, 11.5],
+  target: [0, 1.3, 0],
+  fov: 42,
+};
 const HORIZON = '#cfe2f0';
+/** Headroom above a dino that must also stay in frame (nameplates are DOM). */
+const HEAD_MARGIN = 0.4;
 
 /** Fixed scenery, so the world has depth cues. Hand-placed, never random. */
 const TREES: readonly { x: number; z: number; scale: number }[] = [
@@ -58,9 +84,19 @@ export function WorldView({
   frozen = false,
   stateLoaded = true,
   className,
-  cameraPosition = CAMERA_POSITION,
-  cameraTarget = CAMERA_TARGET,
+  motion,
+  cameraPosition,
+  cameraTarget,
 }: WorldViewProps): JSX.Element {
+  const override: CameraShot | null =
+    cameraPosition || cameraTarget
+      ? {
+          position: cameraPosition ?? BASE_SHOT.position,
+          target: cameraTarget ?? BASE_SHOT.target,
+          fov: BASE_SHOT.fov,
+        }
+      : null;
+
   return (
     <Canvas
       className={className}
@@ -72,7 +108,12 @@ export function WorldView({
         preserveDrawingBuffer: frozen,
         powerPreference: 'default',
       }}
-      camera={{ position: [...cameraPosition], fov: 42, near: 0.1, far: 600 }}
+      camera={{
+        position: [...(override?.position ?? BASE_SHOT.position)],
+        fov: BASE_SHOT.fov,
+        near: 0.1,
+        far: 600,
+      }}
       data-testid="world-canvas"
     >
       <WorldScene
@@ -80,11 +121,21 @@ export function WorldView({
         resolveTextureUrl={resolveTextureUrl}
         frozen={frozen}
         stateLoaded={stateLoaded}
-        cameraPosition={cameraPosition}
-        cameraTarget={cameraTarget}
+        motion={motion}
+        override={override}
       />
     </Canvas>
   );
+}
+
+interface SceneProps {
+  players: readonly PlayerState[];
+  resolveTextureUrl: (hash: string) => string | null;
+  frozen: boolean;
+  stateLoaded: boolean;
+  motion: MotionSource | undefined;
+  /** A caller-pinned shot (the capture preview); `null` == fit to the world. */
+  override: CameraShot | null;
 }
 
 function WorldScene({
@@ -92,20 +143,62 @@ function WorldScene({
   resolveTextureUrl,
   frozen,
   stateLoaded,
-  cameraPosition,
-  cameraTarget,
-}: Required<Omit<WorldViewProps, 'className'>>): JSX.Element {
+  motion,
+  override,
+}: SceneProps): JSX.Element {
   const camera = useThree((state) => state.camera);
+  const size = useThree((state) => state.size);
+  const clock = useThree((state) => state.clock);
   const sky = useMemo(() => makeGradientTexture([236, 240, 226], [110, 168, 224]), []);
   const ground = useMemo(() => makeCheckerTexture([116, 152, 74], [104, 140, 68], 60), []);
-  const [camX, camY, camZ] = cameraPosition;
-  const [targetX, targetY, targetZ] = cameraTarget;
+
+  const seed = motion?.seed ?? '';
+  const aspect = size.height > 0 ? size.width / size.height : 1.6;
+
+  // Framed from where the dinos can *walk*, not from where they stand now, so
+  // the camera never has to move again while the lobby's membership is stable.
+  const shot = useMemo(
+    () => (override ? override : fitShotToPoints(BASE_SHOT, framePoints(players, seed), { aspect })),
+    [override, players, seed, aspect],
+  );
+
+  const [camX, camY, camZ] = shot.position;
+  const [targetX, targetY, targetZ] = shot.target;
 
   useLayoutEffect(() => {
+    (camera as PerspectiveCamera).fov = shot.fov;
     camera.position.set(camX, camY, camZ);
     camera.lookAt(targetX, targetY, targetZ);
     camera.updateProjectionMatrix();
-  }, [camera, camX, camY, camZ, targetX, targetY, targetZ]);
+    worldDebug.camera = {
+      position: [camX, camY, camZ],
+      target: [targetX, targetY, targetZ],
+      fov: shot.fov,
+      aspect,
+    };
+  }, [camera, camX, camY, camZ, targetX, targetY, targetZ, shot.fov, aspect]);
+
+  // ── The shared clock ──────────────────────────────────────────────────────
+  // Live: server epoch + estimated clock offset. Harness: the renderer's own
+  // clock, exactly as before. `frozen` pins it at 0 in both.
+  const motionTime = useMemo<() => number>(() => {
+    if (frozen) return () => 0;
+    if (motion) return motion.nowSeconds;
+    return () => clock.elapsedTime;
+  }, [frozen, motion, clock]);
+
+  useEffect(() => {
+    setMotionTimeSource(motionTime);
+    worldDebug.motion = motion
+      ? {
+          source: 'server',
+          seed: motion.seed,
+          epoch: motion.epoch,
+          offsetMs: motion.offsetMs,
+          samples: motion.samples,
+        }
+      : { source: 'local', seed: '', epoch: 0, offsetMs: 0, samples: 0 };
+  }, [motionTime, motion]);
 
   useEffect(() => {
     worldDebug.frozen = frozen;
@@ -124,8 +217,43 @@ function WorldScene({
         },
       ]),
     );
+    for (const id of Object.keys(worldDebug.poses)) {
+      if (!players.some((player) => player.id === id)) delete worldDebug.poses[id];
+    }
+    // Deterministic cross-client sampling: two clients can be compared at an
+    // agreed motion time instead of at whatever instant each was polled.
+    worldDebug.poseAtTime = (playerId, t) => {
+      const player = players.find((candidate) => candidate.id === playerId);
+      if (!player) return null;
+      const pose = poseAt(player, t, seed);
+      return { x: pose.x, y: pose.y, z: pose.z, rotationY: pose.rotationY, t };
+    };
     setWorldStateLoaded(stateLoaded);
-  }, [players, frozen, stateLoaded]);
+    return () => {
+      delete worldDebug.poseAtTime;
+    };
+  }, [players, frozen, stateLoaded, seed]);
+
+  // Would this player be fully inside the frame at motion time `t`? Sampling
+  // it across a whole wander period is how E2E #2 proves the framing holds for
+  // every instant, not just for the one the test happened to catch.
+  useEffect(() => {
+    const scratch = new Vector3();
+    worldDebug.playerOnScreen = (playerId, t) => {
+      const player = players.find((candidate) => candidate.id === playerId);
+      if (!player) return null;
+      const pose = poseAt(player, t, seed);
+      const perspective = camera as PerspectiveCamera;
+      const top = pose.y + dinoHeight(player.modelSlug);
+      return (
+        inView(scratch.set(pose.x, pose.y, pose.z), perspective) &&
+        inView(scratch.set(pose.x, top, pose.z), perspective)
+      );
+    };
+    return () => {
+      delete worldDebug.playerOnScreen;
+    };
+  }, [players, seed, camera]);
 
   return (
     <>
@@ -156,6 +284,8 @@ function WorldScene({
           player={player}
           textureUrl={player.textureHash ? resolveTextureUrl(player.textureHash) : null}
           frozen={frozen}
+          seed={seed}
+          motionTime={motionTime}
         />
       ))}
 
@@ -165,14 +295,34 @@ function WorldScene({
           enablePan={false}
           enableDamping={false}
           minDistance={4}
-          maxDistance={30}
+          maxDistance={60}
           maxPolarAngle={Math.PI / 2.1}
         />
       )}
 
-      <FrameTicker />
+      <FrameTicker players={players} />
     </>
   );
+}
+
+/**
+ * The corners of every dino's reachable box, at foot and head height — the
+ * points the camera has to keep in frame for "every dino on screen" to be true
+ * at every instant, not just at spawn.
+ */
+function framePoints(players: readonly PlayerState[], seed: string): Point3[] {
+  const points: Point3[] = [];
+  for (const player of players) {
+    const bounds = motionBounds(player, seed);
+    const top = player.position.y + dinoHeight(player.modelSlug) + HEAD_MARGIN;
+    for (const x of [bounds.minX, bounds.maxX]) {
+      for (const z of [bounds.minZ, bounds.maxZ]) {
+        points.push({ x, y: player.position.y, z });
+        points.push({ x, y: top, z });
+      }
+    }
+  }
+  return points;
 }
 
 function Tree({ x, z, scale }: { x: number; z: number; scale: number }): JSX.Element {
@@ -190,11 +340,33 @@ function Tree({ x, z, scale }: { x: number; z: number; scale: number }): JSX.Ele
   );
 }
 
-/** Counts rendered frames and re-evaluates `window.__world.ready`. */
-function FrameTicker(): null {
-  useFrame(() => {
+/**
+ * Counts rendered frames, re-evaluates `window.__world.ready`, and keeps
+ * `offscreen` honest by projecting every dino into the viewport each frame.
+ */
+function FrameTicker({ players }: { players: readonly PlayerState[] }): null {
+  const scratch = useRef(new Vector3());
+
+  useFrame((state) => {
     worldDebug.frames += 1;
     if (!worldDebug.ready) refreshWorldReadiness();
+
+    const camera = state.camera as PerspectiveCamera;
+    let offscreen = 0;
+    for (const player of players) {
+      const pose = worldDebug.poses[player.id];
+      if (!pose) continue;
+      const top = pose.y + dinoHeight(player.modelSlug);
+      if (!inView(scratch.current.set(pose.x, pose.y, pose.z), camera)) offscreen += 1;
+      else if (!inView(scratch.current.set(pose.x, top, pose.z), camera)) offscreen += 1;
+    }
+    worldDebug.offscreen = offscreen;
   });
   return null;
+}
+
+/** Is this world point inside the camera's frame? (NDC, with a hair of slack.) */
+function inView(point: Vector3, camera: PerspectiveCamera): boolean {
+  const ndc = point.project(camera);
+  return Math.abs(ndc.x) <= 1.001 && Math.abs(ndc.y) <= 1.001 && ndc.z <= 1;
 }

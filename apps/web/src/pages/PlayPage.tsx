@@ -88,6 +88,9 @@ export function PlayPage(): JSX.Element {
           resolveTextureUrl={textureUrlFor}
           frozen={params.frozen}
           stateLoaded={lobby.status === 'connected'}
+          // The server's seed + clock: what makes every screen showing this
+          // lobby render the same dinosaur in the same place while it moves.
+          {...(lobby.motion ? { motion: lobby.motion } : {})}
         />
       </div>
 

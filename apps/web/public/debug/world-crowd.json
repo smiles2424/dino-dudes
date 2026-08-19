@@ -1,0 +1,150 @@
+{
+  "code": "CROWD",
+  "createdAt": 0,
+  "players": {
+    "sess-0": {
+      "id": "11111111-aaaa-4aaa-8aaa-111111111111",
+      "name": "Ring 1",
+      "modelSlug": "trex",
+      "textureHash": "",
+      "position": {
+        "x": 8,
+        "y": 0,
+        "z": 0
+      },
+      "heading": -1.571
+    },
+    "sess-1": {
+      "id": "22222222-aaaa-4aaa-8aaa-222222222222",
+      "name": "Ring 2",
+      "modelSlug": "stego",
+      "textureHash": "",
+      "position": {
+        "x": 5.196,
+        "y": 0,
+        "z": 3
+      },
+      "heading": -2.094
+    },
+    "sess-2": {
+      "id": "33333333-aaaa-4aaa-8aaa-333333333333",
+      "name": "Ring 3",
+      "modelSlug": "raptor",
+      "textureHash": "",
+      "position": {
+        "x": 2,
+        "y": 0,
+        "z": 3.464
+      },
+      "heading": -2.618
+    },
+    "sess-3": {
+      "id": "44444444-aaaa-4aaa-8aaa-444444444444",
+      "name": "Ring 4",
+      "modelSlug": "bronto",
+      "textureHash": "",
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": 7
+      },
+      "heading": -3.142
+    },
+    "sess-4": {
+      "id": "55555555-aaaa-4aaa-8aaa-555555555555",
+      "name": "Ring 5",
+      "modelSlug": "trex",
+      "textureHash": "",
+      "position": {
+        "x": -2.5,
+        "y": 0,
+        "z": 4.33
+      },
+      "heading": 2.618
+    },
+    "sess-5": {
+      "id": "66666666-aaaa-4aaa-8aaa-666666666666",
+      "name": "Ring 6",
+      "modelSlug": "stego",
+      "textureHash": "",
+      "position": {
+        "x": -6.928,
+        "y": 0,
+        "z": 4
+      },
+      "heading": 2.094
+    },
+    "sess-6": {
+      "id": "77777777-aaaa-4aaa-8aaa-777777777777",
+      "name": "Ring 7",
+      "modelSlug": "raptor",
+      "textureHash": "",
+      "position": {
+        "x": -4,
+        "y": 0,
+        "z": 0
+      },
+      "heading": 1.571
+    },
+    "sess-7": {
+      "id": "88888888-aaaa-4aaa-8aaa-888888888888",
+      "name": "Ring 8",
+      "modelSlug": "bronto",
+      "textureHash": "",
+      "position": {
+        "x": -5.196,
+        "y": 0,
+        "z": -3
+      },
+      "heading": 1.047
+    },
+    "sess-8": {
+      "id": "99999999-aaaa-4aaa-8aaa-999999999999",
+      "name": "Ring 9",
+      "modelSlug": "trex",
+      "textureHash": "",
+      "position": {
+        "x": -4,
+        "y": 0,
+        "z": -6.928
+      },
+      "heading": 0.524
+    },
+    "sess-9": {
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "name": "Ring 10",
+      "modelSlug": "stego",
+      "textureHash": "",
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": -5
+      },
+      "heading": 0
+    },
+    "sess-10": {
+      "id": "bbbbbbbb-aaaa-4aaa-8aaa-bbbbbbbbbbbb",
+      "name": "Ring 11",
+      "modelSlug": "raptor",
+      "textureHash": "",
+      "position": {
+        "x": 3.5,
+        "y": 0,
+        "z": -6.062
+      },
+      "heading": -0.524
+    },
+    "sess-11": {
+      "id": "cccccccc-aaaa-4aaa-8aaa-cccccccccccc",
+      "name": "Ring 12",
+      "modelSlug": "bronto",
+      "textureHash": "",
+      "position": {
+        "x": 6.928,
+        "y": 0,
+        "z": -4
+      },
+      "heading": -1.047
+    }
+  }
+}

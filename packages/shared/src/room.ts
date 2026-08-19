@@ -52,12 +52,37 @@ export const PlayerStateSchema = z.object({
 });
 export type PlayerState = z.infer<typeof PlayerStateSchema>;
 
-/** The whole synchronized room state. */
+/**
+ * How often the room refreshes {@link LobbyStateSchema}'s `serverTime`.
+ * Added Wave 5 Chunk 5.1. Each tick is one small number in the next patch, and
+ * every tick re-estimates the client's clock offset, so this is both the worst
+ * staleness a freshly joined client can see before its first refresh *and* how
+ * fast an estimate made on a busy page (a late-processed patch reads as a
+ * too-small offset) converges on the truth.
+ */
+export const SERVER_TIME_TICK_MS = 500;
+
+/**
+ * The whole synchronized room state.
+ *
+ * `motionSeed` / `motionEpoch` / `serverTime` were added in Wave 5 Chunk 5.1
+ * (**additive**) so that idle motion is identical on every screen: the server
+ * issues the seed and the epoch the wander is timed from, and `serverTime` —
+ * refreshed every {@link SERVER_TIME_TICK_MS} — lets a client estimate its
+ * offset from the server's clock. All three default so a client can still read
+ * a state produced by an older server (it then falls back to local motion).
+ */
 export const LobbyStateSchema = z.object({
   code: z.string(),
   /** Keyed by Colyseus `sessionId`. */
   players: z.record(z.string(), PlayerStateSchema),
   createdAt: z.number().int().nonnegative(),
+  /** Per-lobby wander seed. Empty string == no server seed (harness/legacy). */
+  motionSeed: z.string().default(''),
+  /** Epoch (ms, server clock) that motion time is measured from. */
+  motionEpoch: z.number().nonnegative().default(0),
+  /** The server's wall clock, refreshed on a fixed tick. `0` == never set. */
+  serverTime: z.number().nonnegative().default(0),
 });
 export type LobbyState = z.infer<typeof LobbyStateSchema>;
 

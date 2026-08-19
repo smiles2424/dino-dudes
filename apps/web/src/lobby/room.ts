@@ -50,24 +50,49 @@ const LiveStateSchema = LobbyStateSchema.extend({
   players: z.record(z.string(), LivePlayerSchema),
 });
 
+/** The room's shared motion clock, as carried in state (Wave 5, Chunk 5.1). */
+export interface LiveMotion {
+  seed: string;
+  /** Server-clock ms the wander is timed from. `0` == no server clock. */
+  epoch: number;
+  /** The server's wall clock as of this patch. `0` == not set yet. */
+  serverTime: number;
+}
+
+export interface LiveSnapshot {
+  players: PlayerState[];
+  motion: LiveMotion;
+  error: string | null;
+}
+
 /**
- * Turn a Colyseus state snapshot into the renderer's player list.
+ * Turn a Colyseus state snapshot into the renderer's player list plus the
+ * lobby's motion clock.
  *
  * Order is stable (sorted by player id) so React never remounts a dino just
  * because the server's map iteration order changed.
  */
-export function readPlayers(snapshot: unknown): { players: PlayerState[]; error: string | null } {
+export function readPlayers(snapshot: unknown): LiveSnapshot {
   const parsed = LiveStateSchema.safeParse(snapshot);
   if (!parsed.success) {
     return {
       players: [],
+      motion: { seed: '', epoch: 0, serverTime: 0 },
       error: `room state does not match the shared contract: ${parsed.error.issues
         .map((issue) => issue.path.join('.'))
         .join(', ')}`,
     };
   }
   const players = Object.values(parsed.data.players).sort((a, b) => a.id.localeCompare(b.id));
-  return { players, error: null };
+  return {
+    players,
+    motion: {
+      seed: parsed.data.motionSeed,
+      epoch: parsed.data.motionEpoch,
+      serverTime: parsed.data.serverTime,
+    },
+    error: null,
+  };
 }
 
 /** A live room handle. The state type is read through {@link readPlayers}. */

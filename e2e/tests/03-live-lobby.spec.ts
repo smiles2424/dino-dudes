@@ -156,7 +156,13 @@ test('a drawing uploaded over HTTP appears on the spectator screen', async ({ pa
   // Live mode is not screenshot mode; the world is animating.
   expect(world.frozen).toBe(false);
   // The harness and the live view report the same contract version.
-  expect(world.version).toBe(2);
+  expect(world.version).toBe(3);
+  // A live lobby times its wander from the server's clock (Wave 5, Chunk 5.1).
+  expect(world.motion?.source).toBe('server');
+  expect(world.motion?.seed).toMatch(/^[0-9a-f]{16}$/);
+  expect(world.motion?.epoch).toBeGreaterThan(0);
+  // …and the one dino in it is inside the frame.
+  expect(world.offscreen).toBe(0);
 
   // The nameplate comes from synchronized state, not from anything local.
   await expect(page.getByTestId('nameplate')).toHaveCount(1);

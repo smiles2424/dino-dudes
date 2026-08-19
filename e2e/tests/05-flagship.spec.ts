@@ -16,12 +16,14 @@
  *
  * Three things this proves that no earlier test does:
  *
- *   1. **Two independent clients, one world.** A and B report byte-identical
- *      synced positions/headings for every dino (`window.__world.players`,
- *      added in contract version 2) — the automated evidence PLAN.md's
- *      "two-client world consistency" follow-up asks for. Note the *wander* is
- *      still client-local; this asserts the server-assigned state both clients
- *      render from, which is the part that must agree.
+ *   1. **Two independent clients, one world — including while it moves.** A and
+ *      B report byte-identical synced positions/headings for every dino
+ *      (`window.__world.players`), agree on the room's motion seed and epoch to
+ *      within a few ms of clock skew, compute the same trajectory for a future
+ *      instant, and render the *moving* dino in the same place at the same
+ *      wall-clock moment (`window.__world.poses`, contract version 3). That is
+ *      all of PLAN.md's "two-client world consistency" follow-up, with the
+ *      dinosaurs actually walking — the half spawn state could never prove.
  *   2. **Two clients, one world — in pixels.** Both browsers also open the same
  *      lobby in `?static=1` (motion frozen, fixed 800×500 canvas, DPR 1) and
  *      the two rendered canvases are compared cell by cell.
@@ -108,6 +110,25 @@ const JOIN_BUDGET_MS = 30_000;
  * millimetres in a world measured in metres.
  */
 const POSITION_TOLERANCE = 1e-4;
+
+/**
+ * How far apart the two clients' estimates of the *server's* clock may be.
+ *
+ * Both browsers run on this machine, so this is pure estimation error: a page
+ * that processes a patch late under six parallel SwiftShader workers reads an
+ * offset that is too small until a later tick corrects it. 400 ms of skew moves
+ * a wandering dino by at most 400 ms × 0.47 m/s ≈ 19 cm; the number is printed
+ * on every run and has measured well under half of this on an idle machine.
+ */
+const MAX_CLOCK_SKEW_MS = 400;
+/**
+ * How far apart the two clients may render the same *moving* dino, sampled at
+ * the same wall-clock moment. Deliberately a fixed distance rather than one
+ * derived from the observed skew (which would excuse any amount of drift):
+ * with page-local timing — the pre-Wave-5 behaviour — two browsers loaded
+ * seconds apart sit at different phases of the same orbit and this is metres.
+ */
+const LIVE_POSITION_TOLERANCE = 0.35;
 
 /** Downsampled canvas signature: 64×40 luminance cells of the 800×500 frame. */
 const SIGNATURE = { width: 64, height: 40 };
@@ -353,7 +374,7 @@ test('two browsers, one lobby: a phone drawing lands on the projector', async ({
       { timeout: JOIN_BUDGET_MS },
     );
     const world = await projectorPage.evaluate(() => ({ ...window.__world }));
-    expect(world.version).toBe(2);
+    expect(world.version).toBe(3);
     expect(world.dinoCount, 'two players, two dinos').toBe(2);
     expect(world.appliedTextures?.[playerIdA]).toBe(hashA);
     expect(world.appliedTextures?.[playerIdB]).toBe(hashB);
@@ -404,16 +425,128 @@ test('two browsers, one lobby: a phone drawing lands on the projector', async ({
     expect(world.players?.[playerIdB]?.modelSlug).toBe(MODEL_B);
 
     /*
+     * ── 10b. Two clients, one world — WHILE THE DINOS ARE MOVING ────────────
+     *
+     * This is the half of PLAN.md's "two-client world consistency" follow-up
+     * that spawn positions could never prove. Until Wave 5 the wander was
+     * seeded locally and timed from each page's own load clock, so two screens
+     * drifted apart the moment anything moved. Now the room issues the seed
+     * (`motionSeed`) and the epoch, and refreshes `serverTime` on a tick from
+     * which each client estimates its offset — so both browsers evaluate the
+     * same function of the same clock.
+     */
+    for (const [label, page] of [
+      ['projector', projectorPage],
+      ['phone', phonePage],
+    ] as const) {
+      await page.waitForFunction(
+        /*
+         * Six ticks (~3 s). One sample is not enough: the estimate is the
+         * largest `serverTime - Date.now()` seen, and a page busy compiling
+         * shaders processes its first patches late, which reads as an offset
+         * that is too *small*. Every further sample can only correct it
+         * upward, so a handful is worth waiting for.
+         */
+        () => window.__world?.motion?.source === 'server' && window.__world.motion.samples >= 6,
+        undefined,
+        { timeout: JOIN_BUDGET_MS },
+      );
+      const motion = await page.evaluate(() => window.__world?.motion);
+      expect(motion?.seed, `${label} must have the room's motion seed`).toMatch(/^[0-9a-f]{16}$/);
+    }
+
+    const [motionA, motionB] = await Promise.all([
+      projectorPage.evaluate(() => window.__world?.motion),
+      phonePage.evaluate(() => window.__world?.motion),
+    ]);
+    expect(motionB?.seed, 'both clients wander from ONE seed').toBe(motionA?.seed);
+    expect(motionB?.epoch, 'both clients count from ONE epoch').toBe(motionA?.epoch);
+    // Both browsers run on this machine, so their estimates of the *server's*
+    // clock must land on the same value; the gap is the sync error between the
+    // two screens, in milliseconds.
+    const clockSkewMs = Math.abs((motionA?.offsetMs ?? 0) - (motionB?.offsetMs ?? 0));
+    console.log(
+      `[e2e#5] shared motion clock: seed ${motionA?.seed}, offsets ` +
+        `${motionA?.offsetMs}ms / ${motionB?.offsetMs}ms → skew ${clockSkewMs}ms`,
+    );
+    expect(clockSkewMs, 'the two clients must agree on the server clock').toBeLessThan(
+      MAX_CLOCK_SKEW_MS,
+    );
+
+    /*
+     * (a) The trajectories themselves: both clients are asked what they would
+     * render for B at the same agreed motion time, seconds in the future. No
+     * frame timing, no polling skew — this is pure "do they compute the same
+     * path", and a local seed or a page-local clock fails it by metres.
+     */
+    const sampleAt = Math.round(await projectorPage.evaluate(() => window.__world?.motionTime?.() ?? 0)) + 5;
+    const sample = { id: playerIdB, t: sampleAt };
+    const [futureA, futureB] = await Promise.all([
+      projectorPage.evaluate((args) => window.__world?.poseAtTime?.(args.id, args.t), sample),
+      phonePage.evaluate((args) => window.__world?.poseAtTime?.(args.id, args.t), sample),
+    ]);
+    expect(futureA, 'the projector can evaluate B at a future time').toBeTruthy();
+    expect(futureB, 'the phone can evaluate B at the same time').toBeTruthy();
+    let worstTrajectory = 0;
+    for (const key of ['x', 'y', 'z', 'rotationY'] as const) {
+      worstTrajectory = Math.max(worstTrajectory, Math.abs((futureA?.[key] ?? 0) - (futureB?.[key] ?? 0)));
+    }
+    expect(worstTrajectory, `same trajectory at t=${sampleAt}s`).toBeLessThanOrEqual(POSITION_TOLERANCE);
+
+    /*
+     * (b) …and the dinos really are moving, and really are being rendered from
+     * that shared clock: sample both live `poses` maps at the same wall-clock
+     * moment. Each entry carries the motion time it was evaluated at, so the
+     * only slack allowed is the frame skew between the two browsers times the
+     * fastest a dino can walk.
+     */
+    const livePose = (page: Page): Promise<{ x: number; y: number; z: number; rotationY: number; t: number } | undefined> =>
+      page.evaluate((id) => window.__world?.poses?.[id], playerIdB);
+
+    const firstA = await livePose(projectorPage);
+    await projectorPage.waitForTimeout(1500);
+    const movedA = await livePose(projectorPage);
+    const travelled = Math.hypot(
+      (movedA?.x ?? 0) - (firstA?.x ?? 0),
+      (movedA?.z ?? 0) - (firstA?.z ?? 0),
+    );
+    expect(travelled, 'the dinos must actually be wandering').toBeGreaterThan(0.01);
+
+    const [liveA, liveB] = await Promise.all([livePose(projectorPage), livePose(phonePage)]);
+    expect(liveA, 'the projector renders a pose for B').toBeTruthy();
+    expect(liveB, 'the phone renders a pose for B').toBeTruthy();
+    const frameSkewS = Math.abs((liveA?.t ?? 0) - (liveB?.t ?? 0));
+    const liveDelta = Math.hypot(
+      (liveA?.x ?? 0) - (liveB?.x ?? 0),
+      (liveA?.y ?? 0) - (liveB?.y ?? 0),
+      (liveA?.z ?? 0) - (liveB?.z ?? 0),
+    );
+    console.log(
+      `[e2e#5] two-client agreement DURING motion: |ΔP| ${liveDelta.toFixed(4)} m ` +
+        `(budget ${LIVE_POSITION_TOLERANCE} m) at a sampling skew of ` +
+        `${(frameSkewS * 1000).toFixed(0)} ms; the dino travelled ${travelled.toFixed(3)} m in ` +
+        `1.5 s; trajectory at t=${sampleAt}s agrees to ${worstTrajectory}`,
+    );
+    expect(liveDelta, 'the two clients must render the moving dino in one place').toBeLessThanOrEqual(
+      LIVE_POSITION_TOLERANCE,
+    );
+
+    // Nobody's dinosaur is outside the frame (PLAN.md's other follow-up).
+    expect(await projectorPage.evaluate(() => window.__world?.offscreen)).toBe(0);
+    expect(await phonePage.evaluate(() => window.__world?.offscreen)).toBe(0);
+
+    /*
      * ── 11. Two clients, one world — in pixels ──────────────────────────────
      *
      * Both browsers now open the SAME lobby in screenshot mode: motion frozen,
      * a fixed 800×500 canvas, DPR 1, the same SwiftShader rasteriser. Two
      * independent clients rendering one synchronized state must produce one
      * picture. This holds wherever the server happened to spawn anybody, which
-     * is why it is asserted and "B's arrival changed N pixels" is not: dinos
-     * spawn on a 4–8 m ring and ~17 % of that ring falls outside the
-     * projector camera's frustum, so an unlucky run has a legitimately
-     * unchanged frame (a real product finding — see PLAN.md's follow-ups).
+     * is why it is asserted and "B's arrival changed N pixels" is not. (The
+     * ~17 % of the 4–8 m spawn ring that used to fall outside the frustum is
+     * fixed in Chunk 5.1 — the camera is fitted to the world and `offscreen`
+     * is asserted above — but a frame-diff threshold is still the wrong shape
+     * of assertion for a scene whose spawn points change every run.)
      *
      * Opened only now, after the timed fan-out window: two more WebGL pages
      * fetching the same 1 MB textures would be measuring this test's own load.

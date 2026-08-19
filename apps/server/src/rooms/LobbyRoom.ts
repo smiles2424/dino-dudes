@@ -32,6 +32,7 @@ import {
   LobbyJoinOptionsSchema,
   ROOM_ERROR_CODES,
   ROOM_MESSAGES,
+  SERVER_TIME_TICK_MS,
   MoveMessageSchema,
   SelectModelMessageSchema,
   type AvatarUpdatedMessage,
@@ -74,11 +75,21 @@ export class LobbyState extends Schema {
   code = '';
   createdAt = 0;
   players = new MapSchema<PlayerState>();
+  /** Wave 5 Chunk 5.1 — see {@link LobbyRoom.startMotionClock}. */
+  motionSeed = '';
+  motionEpoch = 0;
+  serverTime = 0;
 }
 defineTypes(LobbyState, {
   code: 'string',
   createdAt: 'number',
   players: { map: PlayerState },
+  // Appended, so existing field indices are untouched.
+  motionSeed: 'string',
+  // `float64` on purpose: these are millisecond epochs (~1.8e12) and float32
+  // quantises them to ~130 s, which would make the shared clock useless.
+  motionEpoch: 'float64',
+  serverTime: 'float64',
 });
 
 // ── Spawn placement ────────────────────────────────────────────────────────
@@ -87,13 +98,16 @@ defineTypes(LobbyState, {
  * Where a dino stands today.
  *
  * Position/heading are **server-assigned once, at join, and then only changed
- * by a client's `move` message** (nothing sends one yet — Wave 2's wander
- * animation is still computed locally by each browser). The spawn point is
+ * by a client's `move` message** (nothing sends one). The spawn point is
  * derived deterministically from the player's identity rather than from join
  * order, so it is identical in every client's copy of the state and stable
- * across a reconnect. That makes this the seed for the "two-client world
- * consistency" follow-up in PLAN.md: once motion is server-authoritative (or
- * seeded from here) the two browsers agree by construction.
+ * across a reconnect.
+ *
+ * This is *home*, not where the dino is standing: since Wave 5 Chunk 5.1 the
+ * clients wander around it as a pure function of `motionSeed`, the player id
+ * and the shared clock (see {@link LobbyRoom.startMotionClock}), so every
+ * browser draws the same animal in the same place at the same moment without
+ * a single position ever crossing the wire.
  */
 export function spawnFor(identity: string): { position: { x: number; y: number; z: number }; heading: number } {
   const digest = createHash('sha256').update(identity).digest();
@@ -198,6 +212,7 @@ export class LobbyRoom extends Room<LobbyState> {
     this.state = new LobbyState();
     this.state.code = code;
     this.state.createdAt = Date.now();
+    this.startMotionClock();
     // `filterBy(['code'])` matches on this, and it makes the code visible to
     // the client-side room listing without joining.
     await this.setMetadata({ code });
@@ -211,7 +226,8 @@ export class LobbyRoom extends Room<LobbyState> {
 
     // Client-authoritative for v1 (see `spawnFor`): the server stores whatever
     // a client reports so the *other* clients can see it, but nothing sends
-    // these yet. Wave 4/5 makes motion server-authoritative.
+    // these — idle motion is a shared function of state, not a stream of
+    // positions (Chunk 5.1). It exists for the day a dino is *driven*.
     this.onMessage(ROOM_MESSAGES.move, (client, message: unknown) => {
       const msg = MoveMessageSchema.safeParse(message);
       const player = this.state.players.get(client.sessionId);
@@ -228,6 +244,39 @@ export class LobbyRoom extends Room<LobbyState> {
     const existing = roomsByCode.get(code);
     if (existing) existing.add(this);
     else roomsByCode.set(code, new Set([this]));
+  }
+
+  /**
+   * The shared motion clock (Wave 5, Chunk 5.1) — how two browsers show the
+   * same dinosaur in the same place while it is *moving*.
+   *
+   * The wander itself stays on the clients (60 fps of ambling does not belong
+   * on the wire), but everything it is derived from now comes from here:
+   *
+   *   • `motionSeed` — one random seed per room. A client's wander parameters
+   *     are hashed from `seed:playerId`, so every client agrees on them and no
+   *     two lobbies look alike.
+   *   • `motionEpoch` — the instant motion time counts from.
+   *   • `serverTime` — this process's wall clock, rewritten every
+   *     {@link SERVER_TIME_TICK_MS}. A client subtracts its own `Date.now()`
+   *     on arrival to estimate the offset between the two clocks, so it can
+   *     evaluate the wander at *server* time rather than at page-load time.
+   *
+   * `this.clock` ticks immediately before every patch is serialized, so the
+   * value a client receives is at most one network hop stale — tens of
+   * milliseconds, which is nothing to a dinosaur ambling at 0.2 rad/s.
+   */
+  private startMotionClock(): void {
+    const now = Date.now();
+    this.state.motionEpoch = now;
+    this.state.serverTime = now;
+    this.state.motionSeed = createHash('sha256')
+      .update(`${this.state.code}:${now}:${randomUUID()}`)
+      .digest('hex')
+      .slice(0, 16);
+    this.clock.setInterval(() => {
+      this.state.serverTime = Date.now();
+    }, SERVER_TIME_TICK_MS);
   }
 
   /**

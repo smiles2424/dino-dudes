@@ -46,13 +46,15 @@ LAN traffic or pause the VPN (the app itself doesn't need internet once running)
 
 - [ ] 2–3 people join the same lobby from their own phones with their own drawings — every
       dino appears on the projector; nobody overwrites anyone else.
-- [ ] Two spectator screens side-by-side show the same dinos in the same spawn spots
-      (their idle wandering will drift apart — known follow-up, don't log it again).
+- [ ] Two spectator screens side-by-side show the same dinos in the same spots — **including
+      while they amble about**: since Wave 5 Chunk 5.1 the wander is computed from the room's
+      seed and the server's clock, so the two screens should look like one window. If they
+      visibly drift, that IS worth logging.
 
 ## Known issues — expected, already logged, don't fail the run for these
 
-1. ~1 in 6 dinos spawns outside the projector camera's view (Wave 5 fix). Reload the
-   projector page to reshuffle what's visible.
+1. ~~~1 in 6 dinos spawned outside the projector camera's view~~ — fixed in Wave 5 Chunk 5.1:
+   the camera now frames itself around everybody. If a dinosaur is off screen, log it.
 2. First page load on a phone can take ~10s (1.3 MB bundle; code-splitting is a Wave 5 item).
 3. Real phone photos are the first non-synthetic input the pipeline has ever seen — if
    detection fails on good-looking photos, save them into `assets/fixtures/` (that's the

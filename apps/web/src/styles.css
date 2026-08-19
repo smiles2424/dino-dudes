@@ -109,6 +109,17 @@ dd {
   min-height: 0;
 }
 
+/* `?size=WxH`: the same escape from the fill-the-window layout, without
+   freezing the clock — how a test renders the world at a phone's aspect. */
+.debug-world--pinned {
+  display: block;
+}
+
+.debug-world--pinned .world-frame {
+  flex: none;
+  min-height: 0;
+}
+
 .nameplate {
   padding: 0.15rem 0.55rem;
   border-radius: 999px;
