@@ -172,10 +172,32 @@ build + `pnpm test --force` + cumulative `pnpm e2e` before the next launches.
   (`pnpm build` clean · `pnpm test --force` 67/67 · `pnpm e2e` 12/12).
 - **Human checkpoint:** real paper-to-screen dry run with 3–5 people.
 
-### Wave 5 — Hardening & deploy  `[ ] not started` *(optional, 1 opus agent)*
-- [ ] `@colyseus/loadtest` ~50 clients in one lobby
-- [ ] Deploy: server → Railway/Fly/Render; client → Vercel/Netlify; CI deploy on `main`
-- [ ] Lobby lifecycle polish (idle dispose, `closed_at`), rate limiting on upload
+### Wave 5 — Hardening & deploy  `[ ] not started` *(3 opus agents, SEQUENTIAL chunks, one branch)*
+Branch: `wave-5/hardening` — each chunk gates on build + `pnpm test --force` + cumulative
+`pnpm e2e` before the next launches. This wave also closes the open Follow-up checks below.
+
+**Chunk 5.1 — world sync & framing** *(1 opus agent)*
+- [ ] Server-seeded motion: wander computed from server-issued seed + server clock so every
+      client renders identical trajectories (closes the "two-client world consistency"
+      follow-up); upgrade the flagship's position assertion to sample DURING motion
+- [ ] Every dino on screen: fix the ~17% off-frustum spawns (camera framing from player
+      count, wider fov, or smaller ring); re-record affected screenshot baselines
+- [ ] `/debug/world` harness keeps working (E2E #2) — deterministic static mode preserved
+
+**Chunk 5.2 — data & robustness** *(1 opus agent)*
+- [ ] Split texture blob (content-addressed, shared) from wearer record (per player) —
+      closes the "one texture, one owner" follow-up sharp edge
+- [ ] Lobby lifecycle polish (idle dispose, `closed_at`), rate limiting on `POST /api/avatars`
+- [ ] `@colyseus/loadtest` ~50 clients in one lobby — script committed + numbers recorded
+
+**Chunk 5.3 — deploy readiness** *(1 opus agent)*
+- [ ] Server containerized/deployable to Railway/Fly/Render (Dockerfile + config), client
+      static build for Vercel/Netlify; production env documented (`.env.example` parity)
+- [ ] CI deploy workflow on `main`, gated on deploy secrets (skips cleanly without)
+- [ ] Code-split `/play` (1.3 MB bundle → faster phone first-load)
+- **Gate (whole wave):** full cumulative suite green; loadtest numbers recorded.
+- **Human checkpoint:** actual deploy (needs YOUR hosting accounts/credentials — agent
+  prepares everything, human clicks); then the venue dry run on deployed URLs.
 
 ## Follow-up checks (validate before the event)
 
