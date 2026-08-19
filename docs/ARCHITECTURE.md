@@ -51,7 +51,7 @@ Doing detection/warp client-side gives instant feedback, offloads the server, an
 ### Save & broadcast
 1. `POST /api/avatars` — multipart: player name, lobby code, texture PNG.
 2. API writes player + avatar rows to **Neon Postgres** (texture as `bytea` — at 1024² PNG ≈ 100–300 KB this is fine; migrate to object storage like R2 only if it becomes a problem), caches texture bytes in **Upstash Redis** keyed by content hash, and publishes `avatar:updated {lobbyCode, playerId, textureHash}` on Redis pub/sub.
-3. The Colyseus lobby room (subscribed to that channel, or called directly in-process) updates its synchronized state; every connected game client sees the new `textureHash`, fetches `GET /api/textures/:hash` (served from Redis cache, Postgres fallback, immutable cache headers since it's content-addressed), and hot-swaps the material — the dino appears/updates **live** for everyone in the lobby.
+3. The Colyseus lobby room (subscribed to that channel, or called directly in-process) updates its synchronized state; every connected game client sees the new `textureHash`, fetches `GET /api/textures/:hash` (served from an in-process memo, then Redis, then Postgres — all three safe because the URL is the sha256 of the bytes, and immutable cache headers for the same reason; the memo matters because this is nearly all of the five-second budget, see Wave 4 Chunk 4.3 in PLAN.md), and hot-swaps the material — the dino appears/updates **live** for everyone in the lobby.
 
 ### Lobby routing
 - Lobby = Colyseus room; join code = room's custom id (e.g. 5-char code). `POST /api/lobbies` creates, `joinById` from clients.

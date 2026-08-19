@@ -74,9 +74,19 @@ jobs:
           UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
         run: pnpm validate:connections
 
+      # The browser suite talks to the real API. With secrets present that is
+      # the full run — lobbies, uploads, Colyseus fan-out, the flagship. Without
+      # them (forked PRs cannot read repository secrets) the server starts with
+      # no Postgres, `/healthz` reports it, and every lobby test skips itself,
+      # so the job is still green and still covers everything that needs no
+      # backend. Playwright's globalTeardown deletes the rows the run created.
       - name: E2E
         env:
           CI: 'true'
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
         run: pnpm e2e:only
 
       - name: Upload Playwright report

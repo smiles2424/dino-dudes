@@ -93,6 +93,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@dino/pipeline':
+        specifier: workspace:*
+        version: link:../../packages/pipeline
       '@dino/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -102,6 +105,12 @@ importers:
       '@react-three/fiber':
         specifier: ^8.18.0
         version: 8.18.0(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(three@0.169.0)
+      colyseus.js:
+        specifier: ^0.16.22
+        version: 0.16.22
+      qrcode-generator:
+        specifier: ^1.5.2
+        version: 1.5.2
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -2059,6 +2068,9 @@ packages:
   proxy-addr@2.0.7:
     resolution: {integrity: sha512-llQsMLSUDUPT44jdrU/O37qlnifitDP+ZwrmmZcoSKyLKvtZxpyV0n2/bD/N4tBAAZ/gJEdZU7KMraoK1+XYAg==}
     engines: {node: '>= 0.10'}
+
+  qrcode-generator@1.5.2:
+    resolution: {integrity: sha512-pItrW0Z9HnDBnFmgiNrY1uxRdri32Uh9EjNYLPVC2zZ3ZRIIEqBoDgm4DkvDwNNDHTK7FNkmr8zAa77BYc9xNw==}
 
   qs@6.15.3:
     resolution: {integrity: sha512-O9gl3zCl5h5blw1KGUzQKhA5oUXSl8rwUIM5o0S3nCXMliSvy5Dzx7/DJcI+SwgICv+IneSZwhBh1oSyEHA71A==}
@@ -4245,6 +4257,8 @@ snapshots:
     dependencies:
       forwarded: 0.2.0
       ipaddr.js: 1.9.1
+
+  qrcode-generator@1.5.2: {}
 
   qs@6.15.3:
     dependencies:

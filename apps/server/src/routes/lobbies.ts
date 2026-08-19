@@ -5,7 +5,7 @@
  * survive a server restart); Redis only holds *live* membership, which is why
  * `GET` reports the persisted `lobby_members` rows rather than the Redis set.
  */
-import { desc, eq, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import {
   API_ROUTES,
@@ -13,16 +13,15 @@ import {
   CreateLobbyResponseSchema,
   GetLobbyParamsSchema,
   GetLobbyResponseSchema,
-  ModelSlugSchema,
-  TextureHashSchema,
   type CreateLobbyResponse,
   type GetLobbyResponse,
   type LobbyMemberInfo,
 } from '@dino/shared';
-import { avatars, db, hasDatabase, lobbies, lobbyMembers, players } from '../db.js';
+import { db, hasDatabase, lobbies } from '../db.js';
 import { env } from '../env.js';
 import { badRequest, notConfigured, notFound } from '../errors.js';
 import { generateLobbyCode } from '../lobby-code.js';
+import { loadLobbyMembers } from '../lobby-members.js';
 
 /** Rows → the frozen `LobbySchema` shape (timestamps as ISO strings). */
 export function serializeLobby(row: typeof lobbies.$inferSelect): CreateLobbyResponse['lobby'] {
@@ -91,58 +90,15 @@ export async function registerLobbyRoutes(app: FastifyInstance): Promise<void> {
     const [lobby] = await db().select().from(lobbies).where(eq(lobbies.code, code)).limit(1);
     if (!lobby) throw notFound(`no lobby with code ${code}`, { code });
 
-    const memberRows = await db()
-      .select({
-        playerId: players.id,
-        name: players.name,
-        joinedAt: lobbyMembers.joinedAt,
-      })
-      .from(lobbyMembers)
-      .innerJoin(players, eq(players.id, lobbyMembers.playerId))
-      .where(eq(lobbyMembers.lobbyId, lobby.id))
-      .orderBy(lobbyMembers.joinedAt);
-
-    // Each member's *current* dino = their most recent avatar row. Fetched in
-    // one extra query and folded in memory: a lobby is party-sized (tens), so
-    // a correlated "latest per player" subquery would be complexity for nothing.
-    const latest = new Map<string, { modelSlug: string; textureHash: string }>();
-    if (memberRows.length > 0) {
-      const avatarRows = await db()
-        .select({
-          playerId: avatars.playerId,
-          modelSlug: avatars.modelSlug,
-          textureHash: avatars.textureHash,
-          createdAt: avatars.createdAt,
-        })
-        .from(avatars)
-        .where(
-          inArray(
-            avatars.playerId,
-            memberRows.map((m) => m.playerId),
-          ),
-        )
-        .orderBy(desc(avatars.createdAt));
-      for (const row of avatarRows) {
-        if (!latest.has(row.playerId)) {
-          latest.set(row.playerId, { modelSlug: row.modelSlug, textureHash: row.textureHash });
-        }
-      }
-    }
-
-    const members: LobbyMemberInfo[] = memberRows.map((m) => {
-      const avatar = latest.get(m.playerId);
-      // A slug/hash that fails the contract (hand-edited row, older schema) is
-      // reported as "no avatar yet" rather than failing the whole request.
-      const slug = avatar ? ModelSlugSchema.safeParse(avatar.modelSlug) : null;
-      const hash = avatar ? TextureHashSchema.safeParse(avatar.textureHash) : null;
-      return {
-        playerId: m.playerId,
-        name: m.name,
-        modelSlug: slug?.success ? slug.data : null,
-        textureHash: hash?.success ? hash.data : null,
-        joinedAt: m.joinedAt.toISOString(),
-      };
-    });
+    // Chunk 4.2 moved this query into `src/lobby-members.ts` — `LobbyRoom`
+    // now needs the identical answer to hydrate a freshly created room.
+    const members: LobbyMemberInfo[] = (await loadLobbyMembers(lobby.id)).map((m) => ({
+      playerId: m.playerId,
+      name: m.name,
+      modelSlug: m.modelSlug,
+      textureHash: m.textureHash,
+      joinedAt: m.joinedAt.toISOString(),
+    }));
 
     const body: GetLobbyResponse = {
       lobby: serializeLobby(lobby),

@@ -9,7 +9,7 @@
  *   5. player row (reused if this name is already in this lobby)
  *   6. avatar row, deduped on texture_hash (UNIQUE — see below)
  *   7. lobby membership (Postgres + Redis)
- *   8. cache texture bytes in Redis
+ *   8. cache texture bytes in memory + Redis
  *   9. ⚑ in-process fan-out hook for Chunk 3.3
  *
  * Steps 7–9 are best-effort: once the rows are committed the upload has
@@ -31,6 +31,7 @@ import { avatars, db, hasDatabase, lobbies, lobbyMembers, players } from '../db.
 import { badRequest, lobbyClosed, notConfigured, notFound, textureInvalid, textureTooLarge } from '../errors.js';
 import { checkTexturePng } from '../png.js';
 import { redis } from '../redis.js';
+import { rememberTexture } from '../texture-cache.js';
 
 /** Postgres `unique_violation`. Drizzle nests the driver error under `cause`. */
 const UNIQUE_VIOLATION = '23505';
@@ -147,9 +148,20 @@ export async function registerAvatarRoutes(app: FastifyInstance): Promise<void> 
 
     // 6. avatar -------------------------------------------------------------
     // `avatars.texture_hash` is UNIQUE: the same drawing can only be stored
-    // once. Re-uploading identical bytes is therefore "already stored", not an
-    // error — `onConflictDoNothing` makes that the normal path (and is race-safe
-    // against a simultaneous identical upload, which a SELECT-then-INSERT is not).
+    // once, so re-uploading identical bytes is "already stored", not an error.
+    //
+    // **Chunk 4.2 changed the conflict action** from `doNothing` to a claim.
+    // The row is both the texture blob AND the record of who is wearing it, so
+    // `doNothing` left the current uploader with no avatar row of their own —
+    // invisible in `GET /api/lobbies/:code` and, since Chunk 4.2, missing from
+    // a freshly hydrated `LobbyRoom`. The last uploader of a given set of
+    // pixels now owns them. In the field that only ever means "the same person
+    // re-sent the same drawing"; two children never draw byte-identical
+    // pictures, but a test fixture uploaded twice does. `onConflictDoUpdate`
+    // stays race-safe against a simultaneous identical upload in a way that a
+    // SELECT-then-INSERT is not. Texture bytes are content-addressed, so they
+    // are never rewritten; `source_photo` is left alone rather than clobbered
+    // with a null.
     let avatarRow: typeof avatars.$inferSelect | undefined;
     try {
       [avatarRow] = await db()
@@ -161,7 +173,10 @@ export async function registerAvatarRoutes(app: FastifyInstance): Promise<void> 
           textureHash,
           sourcePhoto: upload.sourcePhoto ?? null,
         })
-        .onConflictDoNothing({ target: avatars.textureHash })
+        .onConflictDoUpdate({
+          target: avatars.textureHash,
+          set: { playerId: player.id, modelSlug, createdAt: new Date() },
+        })
         .returning();
     } catch (err) {
       // Belt and braces: never surface a 23505 as a 500.
@@ -183,6 +198,10 @@ export async function registerAvatarRoutes(app: FastifyInstance): Promise<void> 
       .onConflictDoNothing();
 
     // 8. cache + live membership (best effort) -------------------------------
+    // Memory first, and unconditionally: every screen in the lobby is about to
+    // ask this process for exactly these bytes, and that fetch is nearly all of
+    // the five-second "drawing on the projector" budget.
+    rememberTexture(textureHash, textureBytes);
     try {
       await redis.setTexture(textureHash, textureBytes);
       await redis.addLobbyMember(lobbyCode, player.id);
@@ -206,9 +225,9 @@ export async function registerAvatarRoutes(app: FastifyInstance): Promise<void> 
       },
       avatar: {
         id: avatarRow.id,
-        // NOTE: on a duplicate texture this is the ORIGINAL uploader's id (the
-        // row is content-addressed and shared). Consumers that need "who just
-        // uploaded" must use `player.id`, which is always the current player.
+        // Since Chunk 4.2's `onConflictDoUpdate` claim this is always the
+        // current uploader, even for a duplicate texture. `player.id` remains
+        // the canonical answer to "who just uploaded".
         playerId: avatarRow.playerId,
         modelSlug,
         textureHash: avatarRow.textureHash,

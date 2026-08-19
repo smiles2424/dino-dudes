@@ -27,6 +27,7 @@ import { buildApp } from '../dist/app.js';
 import { avatars, closeDb, db, lobbies, lobbyMembers, players } from '../dist/db.js';
 import { hasDatabase } from '../dist/env.js';
 import { lobbyPlayersKey, redis, textureKey } from '../dist/redis.js';
+import { clearTextureMemo } from '../dist/texture-cache.js';
 
 const RUN_ID = `t${randomUUID().replace(/-/g, '').slice(0, 10)}`;
 const PLAYER_NAME = `${RUN_ID}-rex`.slice(0, 24);
@@ -179,9 +180,17 @@ describe('Chunk 3.2 REST API (real Fastify + Neon + Upstash)', () => {
     assert.ok(res.rawPayload.equals(TEXTURE), 'served bytes must be byte-identical to the upload');
     assert.equal(createHash('sha256').update(res.rawPayload).digest('hex'), TEXTURE_HASH);
 
+    // The in-process memo is a *third* cache in front of Redis (Wave 4, Chunk
+    // 4.3) and the upload above filled it, so it has to be emptied too for this
+    // to be the cold-read it claims to be.
+    clearTextureMemo();
+    const memoHit = await app.inject({ method: 'GET', url: `/api/textures/${TEXTURE_HASH}` });
+    assert.ok(memoHit.rawPayload.equals(TEXTURE), 'a re-read must serve identical bytes');
+
     // Cache miss → Postgres fallback → cache re-warmed.
     if (hasRedis) {
       await redis.del(textureKey(TEXTURE_HASH));
+      clearTextureMemo();
       assert.equal(await redis.getTexture(TEXTURE_HASH), null, 'cache should be cold now');
 
       const cold = await app.inject({ method: 'GET', url: `/api/textures/${TEXTURE_HASH}` });

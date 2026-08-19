@@ -1,6 +1,19 @@
+/**
+ * `/` — the phone's entry point.
+ *
+ * Chunk 4.2 turned this from a hello-world into the **capture flow** (see
+ * `./capture/CapturePage.tsx`); what is left here is the frame around it: the
+ * title, the live server-health readout that E2E #1 has asserted since Wave 1,
+ * and the links to the other two entry points.
+ *
+ * The health card stays deliberately: at a school event with a projector, one
+ * phone that can say "the server is unreachable" is worth the two lines of
+ * markup, and it is the only end-to-end proof the web build is talking to the
+ * API it was built against.
+ */
 import { useEffect, useState } from 'react';
-import { TEXTURE, TEXTURE_SPEC } from '@dino/shared';
 import { API_BASE, fetchHealth } from './api.js';
+import { CapturePage } from './capture/CapturePage.js';
 import type { Health } from '@dino/shared';
 
 type Status = 'checking' | 'healthy' | 'degraded' | 'unreachable';
@@ -54,20 +67,19 @@ export function App(): JSX.Element {
         Draw on paper, photograph it, watch your dinosaur walk into the shared world.
       </p>
 
-      <section className="card" data-testid="server-health" data-status={status}>
-        <h2>Server</h2>
-        <p className="status-line">
-          Status: <strong data-testid="server-status">{LABEL[status]}</strong>
-        </p>
+      <CapturePage />
+
+      <details className="card server-card" data-testid="server-health" data-status={status}>
+        <summary className="status-line">
+          Server: <strong data-testid="server-status">{LABEL[status]}</strong>
+        </summary>
         <dl>
           <dt>API</dt>
           <dd data-testid="api-base">{API_BASE}</dd>
           <dt>Version</dt>
           <dd data-testid="server-version">{health?.version ?? '—'}</dd>
           <dt>Uptime</dt>
-          <dd data-testid="server-uptime">
-            {health ? `${health.uptimeSeconds}s` : '—'}
-          </dd>
+          <dd data-testid="server-uptime">{health ? `${health.uptimeSeconds}s` : '—'}</dd>
           <dt>Redis</dt>
           <dd data-testid="check-redis">{describeCheck(health?.checks.redis)}</dd>
           <dt>Postgres</dt>
@@ -78,25 +90,16 @@ export function App(): JSX.Element {
             {error}
           </p>
         ) : null}
-      </section>
-
-      <section className="card">
-        <h2>3D world</h2>
-        <p>
-          <a href="/debug/world" data-testid="world-link">
-            Open the world harness
+        <p className="server-links">
+          <a href="/play" data-testid="play-link">
+            Game view
           </a>{' '}
-          — four low-poly dinos wearing test drawings, no backend required.
+          ·{' '}
+          <a href="/debug/world" data-testid="world-link">
+            World harness
+          </a>
         </p>
-      </section>
-
-      <section className="card">
-        <h2>Texture spec v{TEXTURE_SPEC.version}</h2>
-        <p>
-          {TEXTURE.width}×{TEXTURE.height} PNG · ArUco {TEXTURE_SPEC.markers.dictionary} · corner
-          IDs {TEXTURE_SPEC.markers.order.join(', ')}
-        </p>
-      </section>
+      </details>
     </main>
   );
 }

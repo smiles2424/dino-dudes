@@ -23,6 +23,12 @@ export default defineConfig({
   expect: { timeout: 10_000 },
 
   /**
+   * Every lobby test creates real rows in Neon. This deletes them afterwards
+   * (and no-ops without `DATABASE_URL`) — see `scripts/cleanup-e2e-rows.mjs`.
+   */
+  globalTeardown: './global-teardown.ts',
+
+  /**
    * One committed screenshot baseline for every OS (added in Wave 2B).
    *
    * Playwright's default template appends `{platform}`, which would mean a

@@ -58,6 +58,11 @@ interface WorldDebugSnapshot {
   ready: boolean;
   frozen: boolean;
   dinoCount: number;
+  /** Added in `version: 2` — synced position/heading, per player id. */
+  players: Record<
+    string,
+    { x: number; y: number; z: number; heading: number; modelSlug: string }
+  >;
   appliedTextures: Record<string, string>;
   textureErrors: Record<string, string>;
   pendingTextures: number;
@@ -108,9 +113,20 @@ test('the world harness renders every dino and applies every texture', async ({ 
 
   const world = (await page.evaluate(() => ({ ...window.__world }))) as WorldDebugSnapshot;
 
-  expect(world.version).toBe(1);
+  expect(world.version).toBe(2);
   expect(world.frozen).toBe(true);
   expect(world.dinoCount).toBe(players.length);
+  // `players` mirrors the state the renderer was handed, verbatim.
+  expect(Object.keys(world.players).sort()).toEqual(players.map((p) => p.id).sort());
+  for (const player of players) {
+    expect(world.players[player.id]).toEqual({
+      x: player.position.x,
+      y: player.position.y,
+      z: player.position.z,
+      heading: player.heading,
+      modelSlug: player.modelSlug,
+    });
+  }
   expect(world.appliedTextures).toEqual(expectedApplied);
   expect(world.textureErrors).toEqual({});
   expect(world.pendingTextures).toBe(0);
@@ -169,10 +185,20 @@ test('the world idles when live and is perfectly frozen under ?static=1', async 
   await page.waitForFunction(() => window.__world?.ready === true, undefined, { timeout: 25_000 });
   const plate = page.getByTestId('nameplate').first();
   const liveBefore = await plate.boundingBox();
-  await page.waitForTimeout(1200);
-  const liveAfter = await plate.boundingBox();
-  expect(liveBefore && liveAfter).toBeTruthy();
-  expect(Math.abs((liveAfter?.x ?? 0) - (liveBefore?.x ?? 0))).toBeGreaterThan(1);
+  expect(liveBefore).toBeTruthy();
+  /*
+   * Polled rather than sampled once after a fixed wait (Wave 4, Chunk 4.1):
+   * the assertion is unchanged — the plate must really travel — but the wander
+   * only advances on rendered frames, and a worker sharing the machine with
+   * several other SwiftShader browsers can render almost none inside a fixed
+   * 1.2 s. This gives the same fact room to be observed.
+   */
+  await expect
+    .poll(async () => Math.abs(((await plate.boundingBox())?.x ?? 0) - (liveBefore?.x ?? 0)), {
+      timeout: 15_000,
+      message: 'the live world must animate',
+    })
+    .toBeGreaterThan(1);
 
   // Static: nothing moves at all — the precondition for a stable baseline.
   await openWorld(page);
