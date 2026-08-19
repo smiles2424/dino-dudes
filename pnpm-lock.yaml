@@ -69,6 +69,9 @@ importers:
         specifier: ^3.24.1
         version: 3.25.76
     devDependencies:
+      '@colyseus/loadtest':
+        specifier: ^0.16.2
+        version: 0.16.2
       '@colyseus/testing':
         specifier: ^0.16.3
         version: 0.16.3(@colyseus/core@0.16.25(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))(@colyseus/tools@0.16.20(@colyseus/core@0.16.25(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))(@colyseus/ws-transport@0.16.5(@colyseus/core@0.16.25(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))))(colyseus.js@0.16.22)
@@ -299,6 +302,10 @@ packages:
   '@colyseus/httpie@2.0.1':
     resolution: {integrity: sha512-JvABMZzPLiyrUsVj3ElXGORRDTu+NKzXHWd1uV1R1SThAKMm06cVW6bOyADARD65bs8JJoHNNbUkW8KoRvRDzA==}
     engines: {node: '>=10'}
+
+  '@colyseus/loadtest@0.16.2':
+    resolution: {integrity: sha512-Wzwfg5hP4bHn+zQyTo5IGfUAIhI6frOraTSgMjy5PAWTvSg+8NxTDbw/p/dfMXgcwg7FVdTIno3wCzHISELFtA==}
+    hasBin: true
 
   '@colyseus/msgpackr@1.11.3':
     resolution: {integrity: sha512-P86w/FrZWUaV7StxI7WuNg3wFlUrROSiBOrF378wyOgxS5+etcxUQMPe0OJZDEx+QUdu7QOPzsqE0Ziqwpjnug==}
@@ -1255,6 +1262,11 @@ packages:
   bidi-js@1.0.3:
     resolution: {integrity: sha512-RKshQI1R3YQ+n9YJz2QQ147P66ELpa1FQEg20Dk8oW9t2KgLbpDLLp9aGZ7y8WHSshDknG0bknqGw5/tyCs5tw==}
 
+  blessed@0.1.81:
+    resolution: {integrity: sha512-LoF5gae+hlmfORcG1M5+5XZi4LBmvlXTzwJWzUlPryN/SJdSflZvROM2TwkT0GMpq7oqT48NRd4GS7BiVBc5OQ==}
+    engines: {node: '>= 0.8.0'}
+    hasBin: true
+
   bn.js@4.12.5:
     resolution: {integrity: sha512-3aRg6/JxfffFD+OlOjOFR3Vo79l39ooBTFucxx+MT3dhCtzn3EmiUPQo+6/OZuI2jbXi3YKgmiTFBgChQMwIRQ==}
 
@@ -1893,6 +1905,9 @@ packages:
   minimalistic-crypto-utils@1.0.1:
     resolution: {integrity: sha512-JIYlbt6g8i5jKfJ3xz7rF0LXmv2TkDxBLUkiBeZ7bAx4GnnNMr8xFpGnOxn6GhTEHx3SjRrZEoU+j04prX1ktg==}
 
+  minimist@1.2.8:
+    resolution: {integrity: sha512-2yyAR8qBkN3YuheJanUpWC5U3bb5osDywNB8RzDVlDwDHbocAJveqqj1u8+SVD7jkWT4yvsHCpWqqWqAxb0zCA==}
+
   mnemonist@0.40.0:
     resolution: {integrity: sha512-kdd8AFNig2AD5Rkih7EPCXhu/iMvwevQFX/uEiGhZyPZi7fHqOoF4V4kHLpCfysxXMgQ4B52kdPMCwARshKvEg==}
 
@@ -2476,6 +2491,18 @@ packages:
     engines: {node: '>= 8'}
     hasBin: true
 
+  ws@7.5.13:
+    resolution: {integrity: sha512-rsKI6xDBFVf4r/x8XyChGK04QR/XHroxs/jUcoWvtEZM8TPU/X/uIY9B1CsSzYws9ZJb/6bbBu7dPhFW00CAoA==}
+    engines: {node: '>=8.3.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: ^5.0.2
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   ws@8.21.3:
     resolution: {integrity: sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw==}
     engines: {node: '>=10.0.0'}
@@ -2689,6 +2716,17 @@ snapshots:
   '@colyseus/greeting-banner@2.0.6': {}
 
   '@colyseus/httpie@2.0.1': {}
+
+  '@colyseus/loadtest@0.16.2':
+    dependencies:
+      blessed: 0.1.81
+      colyseus.js: 0.16.22
+      minimist: 1.2.8
+      typescript: 5.9.3
+      ws: 7.5.13
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   '@colyseus/msgpackr@1.11.3':
     optionalDependencies:
@@ -3432,6 +3470,8 @@ snapshots:
     dependencies:
       require-from-string: 2.0.2
 
+  blessed@0.1.81: {}
+
   bn.js@4.12.5:
     optional: true
 
@@ -4094,6 +4134,8 @@ snapshots:
   minimalistic-crypto-utils@1.0.1:
     optional: true
 
+  minimist@1.2.8: {}
+
   mnemonist@0.40.0:
     dependencies:
       obliterator: 2.0.5
@@ -4649,6 +4691,8 @@ snapshots:
   which@2.0.2:
     dependencies:
       isexe: 2.0.0
+
+  ws@7.5.13: {}
 
   ws@8.21.3: {}
 

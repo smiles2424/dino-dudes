@@ -192,10 +192,19 @@ Branch: `wave-5/hardening` — each chunk gates on build + `pnpm test --force` +
       at DPR 1 in a fixed 800×500 frame; new `?size=WxH` renders any aspect for the framing test.*
 
 **Chunk 5.2 — data & robustness** *(1 opus agent)*
-- [ ] Split texture blob (content-addressed, shared) from wearer record (per player) —
+- [x] Split texture blob (content-addressed, shared) from wearer record (per player) —
       closes the "one texture, one owner" follow-up sharp edge
-- [ ] Lobby lifecycle polish (idle dispose, `closed_at`), rate limiting on `POST /api/avatars`
-- [ ] `@colyseus/loadtest` ~50 clients in one lobby — script committed + numbers recorded
+      — *migration `0001_split_textures_from_wearers`: new `textures(hash PK, bytes, created_at)`,
+      `avatars` is now one row per player (`player_id` UNIQUE, `texture_hash` a plain FK).*
+- [x] Lobby lifecycle polish (idle dispose, `closed_at`), rate limiting on `POST /api/avatars`
+      — *`lobby-lifecycle.ts`: one UPDATE on room dispose (and an occasional sweep on lobby
+      create) closes lobbies quiet for `LOBBY_IDLE_HOURS`; `rate-limit.ts`: token bucket per
+      person (12/min, burst 6) and per IP (10×, for the venue's shared NAT), off under
+      `NODE_ENV=test`.*
+- [x] `@colyseus/loadtest` ~50 clients in one lobby — script committed + numbers recorded
+      — *`apps/server/loadtest/lobby-loadtest.ts`, `pnpm --filter @dino/server loadtest`:
+      50/50 joined and synced, join p50 113 ms / p95 152 ms, upload→state on the **last** of
+      50 clients 2–41 ms, 2.1 patches/s per client, server RSS 82 MB flat.*
 
 **Chunk 5.3 — deploy readiness** *(1 opus agent)*
 - [ ] Server containerized/deployable to Railway/Fly/Render (Dockerfile + config), client
@@ -246,12 +255,19 @@ Branch: `wave-5/hardening` — each chunk gates on build + `pnpm test --force` +
       memory hit: **3–33 ms, and fan-out 0.07–0.8 s**. Content-addressed keys make it
       unfalsifiable. Still open for Wave 5: multi-instance deployments warm one memo per
       instance, and the venue's uplink still carries the *upload*.
-- [ ] **One texture, one owner** *(sharp edge confirmed in Chunk 4.3)*: `avatars.texture_hash`
+- [x] **One texture, one owner** *(sharp edge confirmed in Chunk 4.3)*: `avatars.texture_hash`
       is UNIQUE and `POST /api/avatars` upserts on it, so identical bytes from a second player
       move the row's `player_id` — and a lobby rebuilt from Postgres then hydrates the robbed
       player with no drawing. Harmless for real children (nobody draws byte-identical
       pictures) but it bit two E2E specs that shared a fixture photo. The clean fix is to split
       the blob (content-addressed, shared) from the wearer record (per player).
+      **CLOSED in Chunk 5.2:** the blob moved to a `textures` table keyed by its own sha256, and
+      `avatars` became the wearer record — one row per player (`player_id` UNIQUE,
+      `texture_hash` a *non*-unique FK). An upload is now "ensure the texture row exists
+      (`onConflictDoNothing`), then upsert **my** wearer row", so byte-identical uploads from two
+      players give two dinos wearing one stored drawing. Asserted through the API
+      (`rest-api.test.mjs`, "two players uploading identical bytes both keep their dino") and at
+      the schema level (`data-layer.test.mjs`). Two E2E specs may share a fixture photo again.
 
 ---
 
@@ -730,3 +746,53 @@ Append-only. Every agent adds a line when it finishes (or blocks): `date — wav
   it free; (b) `SERVER_TIME_TICK_MS` is 2 tiny patches/second per room, worth remembering when
   the loadtest puts ~50 clients in one lobby; (c) `spawnFor`'s 4–8 m ring is unchanged, so
   nothing about lobby data moved — 5.2's texture/lifecycle work does not touch any of this.
+- 2026-08-19 — Wave 5 / Chunk 5.2 (data & robustness) — done — **One texture, one owner is
+  closed at the schema.** Migration `0001_split_textures_from_wearers` (applied to the real
+  Neon) adds `textures(hash PK, bytes, created_at)` — the drawing, addressed by its own sha256
+  and shared — and turns `avatars` into the *wearer* record: one row per player
+  (`player_id` UNIQUE), `texture_hash` a plain FK, `texture` column dropped. The migration
+  moves blobs across (`INSERT … SELECT DISTINCT ON (texture_hash)`) and collapses any avatar
+  history to the newest row per player before adding the constraints; against the real database
+  it moved **nothing**, because `avatars`/`players` were empty (Waves 3–4 test litter had
+  already been cleaned) — 3 stale lobby rows survived untouched and have since been stamped
+  `closed_at` by the new idle sweep. `POST /api/avatars` is now "ensure the texture row exists
+  (`onConflictDoNothing` on the hash) → upsert **my** wearer row (`onConflictDoUpdate` on
+  `player_id`)", so **duplicate bytes from a second player are shared, not stolen**: two dinos,
+  one stored PNG, both still there when the lobby rehydrates. `GET /api/textures/:hash` reads
+  `textures` and no longer cares who wears the drawing; `loadLobbyMembers` lost its
+  "latest per player" fold; `cleanup-e2e-rows.mjs` deletes textures nobody wears.
+  **Lifecycle:** `lobby-lifecycle.ts` — idle == the room is gone AND nothing (join or upload)
+  has happened for `LOBBY_IDLE_HOURS` (12). That is one race-safe UPDATE, run on
+  `LobbyRoom.onDispose` for that lobby and as an occasional (≤1 per 10 min) untargeted sweep on
+  `POST /api/lobbies`. No scheduler, no timer, and a server that sleeps all night closes
+  yesterday's lobbies when the next party starts. `GET /api/lobbies/:code` now answers **409
+  `lobby_closed`** instead of a 200 with `closedAt` set (the web client got the 409/429
+  sentences), the upload route already refused, and room join keeps rejecting with 4090.
+  `POST /api/lobbies` already accepted an optional `name` — verified, untouched.
+  **Rate limiting:** `rate-limit.ts`, a ~40-line token bucket in process. Two buckets per
+  upload: by IP *before* the multipart body is drained (a stuck retry loop costs a header
+  parse, not 2 MB), and by IP+lobby+player after the fields parse. The per-person allowance is
+  **12/min, burst 6** (continuous refill, so thinking between retakes is never punished) and the
+  per-IP one is deliberately **10×** that — at the venue a whole class is behind one Wi-Fi NAT,
+  so a strict per-address limit would refuse the party rather than the abuser. Refusal is
+  `rate_limited` 429 + `Retry-After`. **Disabled by default under `NODE_ENV=test`/`node --test`** so E2E stays
+  deterministic, which is why the maths is asserted at the unit with an injected clock
+  (`test/robustness.test.mjs`, which also drives the idle sweep against real Neon).
+  `.env.example` documents both knobs — and empty values there now read as *unset*, not as `0`.
+  **Loadtest** (`apps/server/loadtest/lobby-loadtest.ts`, `pnpm --filter @dino/server loadtest`,
+  manual only): starts the built server on port 2568, creates a real lobby, joins N clients,
+  uploads mid-run, then cleans its own rows out of Neon. **50/50 joined, 50/50 synced** (every
+  client sees all 50 players), join p50 **113 ms** / p95 **152 ms** / max 939 ms; five 117 kB
+  uploads accepted in 1.36–1.60 s each (localhost multipart + Neon write) and reaching the
+  **slowest of the 50 clients' state in 2–41 ms**; **2.10 patches/s per client** (1050 patches
+  across 50 clients in 10 s — the 500 ms `serverTime` tick, exactly as predicted by 5.1);
+  server RSS **82.5 → 82.1 MB** flat under load. `--tui` hands the same client script to
+  `@colyseus/loadtest`'s dashboard.
+  **Gate:** `pnpm build` clean · `pnpm test --force` **75/75** (shared 14, server **29**,
+  pipeline 32) · `pnpm e2e` **14/14**. Notes for Chunk 5.3: (a) the limiter and the texture
+  memo are both **per process**, so a multi-instance deploy multiplies the effective upload
+  limit and warms one memo per instance — worth a line in the deploy docs, and the reason to
+  prefer one server instance for the event; (b) two new env knobs to carry into the production
+  env/`.env.example` parity check (`AVATAR_UPLOAD_LIMIT_PER_MIN`, `LOBBY_IDLE_HOURS`), and a
+  container must run `db:migrate` (journal is at `0001`) before serving; (c) `pnpm test` still
+  hits the real Neon/Upstash, so CI without secrets skips those files as before.

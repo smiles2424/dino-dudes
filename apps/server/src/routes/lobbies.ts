@@ -19,8 +19,9 @@ import {
 } from '@dino/shared';
 import { db, hasDatabase, lobbies } from '../db.js';
 import { env } from '../env.js';
-import { badRequest, notConfigured, notFound } from '../errors.js';
+import { badRequest, lobbyClosed, notConfigured, notFound } from '../errors.js';
 import { generateLobbyCode } from '../lobby-code.js';
+import { sweepIdleLobbiesOccasionally } from '../lobby-lifecycle.js';
 import { loadLobbyMembers } from '../lobby-members.js';
 
 /** Rows → the frozen `LobbySchema` shape (timestamps as ISO strings). */
@@ -70,6 +71,11 @@ export async function registerLobbyRoutes(app: FastifyInstance): Promise<void> {
       throw new Error(`could not allocate a free lobby code in ${CODE_ATTEMPTS} attempts`);
     }
 
+    // A new party starting is the natural (and rare) moment to close whatever
+    // idled out since the last one — fire-and-forget, so it never delays the
+    // projector (Chunk 5.2, `lobby-lifecycle.ts`).
+    sweepIdleLobbiesOccasionally();
+
     const body: CreateLobbyResponse = {
       lobby: serializeLobby(created),
       joinUrl: joinUrlFor(created.code),
@@ -89,6 +95,12 @@ export async function registerLobbyRoutes(app: FastifyInstance): Promise<void> {
 
     const [lobby] = await db().select().from(lobbies).where(eq(lobbies.code, code)).limit(1);
     if (!lobby) throw notFound(`no lobby with code ${code}`, { code });
+    // Chunk 5.2: a closed lobby is refused here rather than reported as a
+    // 200 with `closedAt` set — the client only ever wanted to know whether it
+    // can send a drawing, and `lobby_closed` is the contract's answer for "no".
+    if (lobby.closedAt) {
+      throw lobbyClosed(`lobby ${code} is closed`, { code, closedAt: lobby.closedAt.toISOString() });
+    }
 
     // Chunk 4.2 moved this query into `src/lobby-members.ts` — `LobbyRoom`
     // now needs the identical answer to hydrate a freshly created room.

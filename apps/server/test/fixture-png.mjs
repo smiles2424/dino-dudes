@@ -1,9 +1,11 @@
 /**
  * A real, valid PNG built from scratch — shared by the server integration tests.
  *
- * Why not a checked-in fixture: the `avatars.texture_hash` column is UNIQUE, so
- * every test run needs *different* bytes or the second run collides with the
- * first run's leftovers. Seeding the colour from a per-run id gives each run its
+ * Why not a checked-in fixture: textures are content-addressed and shared, so
+ * every test run wants *different* bytes — otherwise a run's cleanup would be
+ * deleting a row another run is still using (and, before Chunk 5.2 split the
+ * blob from the wearer, identical bytes actively stole the other player's
+ * avatar row). Seeding the colour from a per-run id gives each run its
  * own content address while keeping the image a smooth gradient — a noise image
  * would not compress and would blow past the Texture Spec's 2 MB cap.
  */

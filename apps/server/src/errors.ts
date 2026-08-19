@@ -45,6 +45,10 @@ export const textureTooLarge = (message: string, details?: unknown): ApiProblem 
 export const lobbyClosed = (message: string, details?: unknown): ApiProblem =>
   new ApiProblem(409, 'lobby_closed', message, details);
 
+/** Too many uploads from one phone / one IP — see `rate-limit.ts`. */
+export const rateLimited = (message: string, details?: unknown): ApiProblem =>
+  new ApiProblem(429, 'rate_limited', message, details);
+
 /**
  * Used when a route needs Neon/Upstash but the process was booted without
  * credentials (CI on a forked PR). 503 + `internal` rather than a crash —

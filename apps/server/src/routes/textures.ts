@@ -10,7 +10,7 @@
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { API_ROUTES, GetTextureParamsSchema, TEXTURE } from '@dino/shared';
-import { avatars, db, hasDatabase } from '../db.js';
+import { db, hasDatabase, textures } from '../db.js';
 import { badRequest, notFound } from '../errors.js';
 import { redis } from '../redis.js';
 import { recallTexture, rememberTexture } from '../texture-cache.js';
@@ -46,13 +46,15 @@ export async function registerTextureRoutes(app: FastifyInstance): Promise<void>
     }
 
     if (!bytes && hasDatabase()) {
+      // Since Chunk 5.2 the blob lives in its own content-addressed table —
+      // this read no longer cares who (if anyone) is wearing the drawing.
       const [row] = await db()
-        .select({ texture: avatars.texture })
-        .from(avatars)
-        .where(eq(avatars.textureHash, hash))
+        .select({ bytes: textures.bytes })
+        .from(textures)
+        .where(eq(textures.hash, hash))
         .limit(1);
       if (row) {
-        bytes = row.texture;
+        bytes = row.bytes;
         // Re-warm the cache so the next reader (every other phone in the lobby,
         // seconds later) is served from Redis.
         try {

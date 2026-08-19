@@ -24,7 +24,7 @@ import { eq, inArray } from 'drizzle-orm';
 
 import { makePng } from './fixture-png.mjs';
 import { buildApp } from '../dist/app.js';
-import { avatars, closeDb, db, lobbies, lobbyMembers, players } from '../dist/db.js';
+import { avatars, closeDb, db, lobbies, lobbyMembers, players, textures } from '../dist/db.js';
 import { hasDatabase } from '../dist/env.js';
 import { lobbyPlayersKey, redis, textureKey } from '../dist/redis.js';
 import { clearTextureMemo } from '../dist/texture-cache.js';
@@ -34,7 +34,7 @@ const PLAYER_NAME = `${RUN_ID}-rex`.slice(0, 24);
 const skipPg = !hasDatabase() && 'no DATABASE_URL — skipping real-Neon API test';
 const hasRedis = redis.configured;
 
-const created = { players: [], avatars: [], lobbies: [], redisKeys: [] };
+const created = { players: [], avatars: [], textures: [], lobbies: [], redisKeys: [] };
 
 // ── A real 1024×1024 PNG, unique per run (see `fixture-png.mjs`) ───────────
 const TEXTURE = makePng(1024, RUN_ID);
@@ -152,15 +152,18 @@ describe('Chunk 3.2 REST API (real Fastify + Neon + Upstash)', () => {
     const body = res.json();
     created.players.push(body.player.id);
     created.avatars.push(body.avatar.id);
+    created.textures.push(TEXTURE_HASH);
 
     assert.equal(body.player.name, PLAYER_NAME);
     assert.equal(body.avatar.modelSlug, 'trex');
+    assert.equal(body.avatar.playerId, body.player.id, 'the wearer row belongs to the uploader');
     assert.equal(body.avatar.textureHash, TEXTURE_HASH, 'server must derive the sha256 itself');
     assert.equal(body.textureUrl, `/api/textures/${TEXTURE_HASH}`);
 
-    // The bytes really landed in Postgres, not just in the response.
-    const [stored] = await db().select().from(avatars).where(eq(avatars.textureHash, TEXTURE_HASH));
-    assert.ok(stored.texture.equals(TEXTURE), 'stored texture must be byte-identical');
+    // The bytes really landed in Postgres — in the shared, content-addressed
+    // `textures` table since Chunk 5.2, not on the wearer row.
+    const [stored] = await db().select().from(textures).where(eq(textures.hash, TEXTURE_HASH));
+    assert.ok(stored.bytes.equals(TEXTURE), 'stored texture must be byte-identical');
 
     if (hasRedis) {
       const cached = await redis.getTexture(TEXTURE_HASH);
@@ -243,6 +246,70 @@ describe('Chunk 3.2 REST API (real Fastify + Neon + Upstash)', () => {
     assert.equal(lobby.json().memberCount, 1, 'a retake must not duplicate the member');
   });
 
+  /**
+   * The "one texture, one owner" sharp edge, closed in Chunk 5.2.
+   *
+   * `avatars.texture_hash` used to be UNIQUE and the upload upserted on it, so
+   * a second player sending byte-identical bytes MOVED the first player's row —
+   * and the first player then rehydrated into their lobby with no drawing.
+   */
+  test('two players uploading identical bytes both keep their dino', { skip: skipPg }, async () => {
+    const twinName = `${RUN_ID}-twin`.slice(0, 24);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/avatars',
+      ...avatarUpload({ lobbyCode, name: twinName, modelSlug: 'stego' }),
+    });
+    assert.equal(res.statusCode, 201, res.payload);
+
+    const body = res.json();
+    created.players.push(body.player.id);
+    created.avatars.push(body.avatar.id);
+
+    assert.notEqual(body.player.id, created.players[0], 'a different name is a different player');
+    assert.notEqual(body.avatar.id, created.avatars[0], 'the twin gets their OWN wearer row');
+    assert.equal(body.avatar.playerId, body.player.id, 'and it belongs to them');
+    assert.equal(body.avatar.textureHash, TEXTURE_HASH, 'sharing one content-addressed drawing');
+
+    // Exactly one copy of the bytes, worn by exactly two people.
+    const blobs = await db().select({ hash: textures.hash }).from(textures).where(eq(textures.hash, TEXTURE_HASH));
+    assert.equal(blobs.length, 1, 'identical bytes are stored once');
+    const wearers = await db().select().from(avatars).where(eq(avatars.textureHash, TEXTURE_HASH));
+    assert.equal(wearers.length, 2, 'one drawing, two wearers');
+
+    // And — the bit that used to break — the FIRST player still has theirs.
+    const lobby = await app.inject({ method: 'GET', url: `/api/lobbies/${lobbyCode}` });
+    const members = lobby.json().members;
+    assert.equal(members.length, 2);
+    for (const member of members) {
+      assert.equal(member.textureHash, TEXTURE_HASH, `${member.name} must still be wearing the drawing`);
+    }
+    assert.equal(members.find((m) => m.name === PLAYER_NAME)?.modelSlug, 'trex');
+    assert.equal(members.find((m) => m.name === twinName)?.modelSlug, 'stego');
+  });
+
+  test('a closed lobby is refused by both GET and upload', { skip: skipPg }, async () => {
+    const create = await app.inject({ method: 'POST', url: '/api/lobbies', payload: { name: `${RUN_ID} closed` } });
+    const closed = create.json().lobby;
+    created.lobbies.push(closed.id);
+
+    // `closed_at` is stamped by the idle sweep in production (see
+    // `lobby-lifecycle.ts`); the API contract is what this asserts.
+    await db().update(lobbies).set({ closedAt: new Date() }).where(eq(lobbies.id, closed.id));
+
+    const get = await app.inject({ method: 'GET', url: `/api/lobbies/${closed.code}` });
+    assert.equal(get.statusCode, 409, get.payload);
+    assert.equal(get.json().error, 'lobby_closed');
+
+    const upload = await app.inject({
+      method: 'POST',
+      url: '/api/avatars',
+      ...avatarUpload({ lobbyCode: closed.code, name: `${RUN_ID}-late`.slice(0, 24) }),
+    });
+    assert.equal(upload.statusCode, 409, upload.payload);
+    assert.equal(upload.json().error, 'lobby_closed');
+  });
+
   test('bad uploads return structured contract errors', { skip: skipPg }, async () => {
     // 1. not a PNG at all
     const notPng = await app.inject({
@@ -304,9 +371,10 @@ describe('Chunk 3.2 REST API (real Fastify + Neon + Upstash)', () => {
     });
     assert.equal(json.json().error, 'bad_request');
 
-    // None of the above may have written anything.
+    // None of the above may have written anything (the two members are the
+    // player and their identical-bytes twin from the tests above).
     const lobby = await app.inject({ method: 'GET', url: `/api/lobbies/${lobbyCode}` });
-    assert.equal(lobby.json().memberCount, 1, 'failed uploads must not create members');
+    assert.equal(lobby.json().memberCount, 2, 'failed uploads must not create members');
   });
 
   after(async () => {
@@ -323,6 +391,11 @@ describe('Chunk 3.2 REST API (real Fastify + Neon + Upstash)', () => {
           () =>
             created.players.length &&
             db().delete(avatars).where(inArray(avatars.playerId, created.players)),
+        ],
+        [
+          'textures',
+          () =>
+            created.textures.length && db().delete(textures).where(inArray(textures.hash, created.textures)),
         ],
         [
           'lobby_members',

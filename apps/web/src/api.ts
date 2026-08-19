@@ -54,6 +54,9 @@ export async function fetchLobby(code: string, signal?: AbortSignal): Promise<Ge
     throw await apiError(res, {
       404: `No lobby with the code ${code}. Check the code on the big screen.`,
       400: `${code} is not a valid lobby code.`,
+      // Since Wave 5 Chunk 5.2 a closed lobby is a 409 rather than a 200 with
+      // `closedAt` set.
+      409: 'That lobby has been closed. Ask for the new code on the big screen.',
     });
   }
   return GetLobbyResponseSchema.parse(await res.json());
@@ -86,7 +89,9 @@ export async function uploadAvatar(input: UploadAvatarInput): Promise<CreateAvat
   if (!res.ok) {
     throw await apiError(res, {
       404: 'That lobby has gone away. Check the code on the big screen.',
+      409: 'That lobby has been closed. Ask for the new code on the big screen.',
       413: 'That drawing came out too big to send. Take the photo again.',
+      429: 'Too many tries in a row. Wait a moment, then send the drawing again.',
     });
   }
   return CreateAvatarResponseSchema.parse(await res.json());

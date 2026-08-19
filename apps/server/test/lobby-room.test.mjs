@@ -25,7 +25,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { after, before, describe, test } from 'node:test';
 
 import { boot } from '@colyseus/testing';
-import { inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 
 import {
   LOBBY_ROOM_NAME,
@@ -36,7 +36,7 @@ import {
 
 import { makePng } from './fixture-png.mjs';
 import { buildApp } from '../dist/app.js';
-import { avatars, closeDb, db, lobbies, lobbyMembers, players } from '../dist/db.js';
+import { avatars, closeDb, db, lobbies, lobbyMembers, players, textures } from '../dist/db.js';
 import { hasDatabase } from '../dist/env.js';
 import { createGameServer } from '../dist/game-server.js';
 import { lobbyPlayersKey, redis, textureKey } from '../dist/redis.js';
@@ -350,6 +350,9 @@ describe('Chunk 3.3 LobbyRoom (real Colyseus + Fastify + Neon + Upstash)', () =>
         'avatars',
         () => created.players.length && db().delete(avatars).where(inArray(avatars.playerId, created.players)),
       );
+      // Textures are shared and content-addressed (Chunk 5.2), so they are
+      // deleted by hash *after* the wearer rows that reference them.
+      await attempt('textures', () => db().delete(textures).where(eq(textures.hash, TEXTURE_HASH)));
       await attempt(
         'lobby_members',
         () =>

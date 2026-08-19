@@ -79,10 +79,18 @@ try {
     const deletedLobbies = await client.query('DELETE FROM lobbies WHERE id = ANY($1::uuid[])', [
       lobbyIds,
     ]);
+    // Since Wave 5 Chunk 5.2 the drawings live in their own content-addressed
+    // table, shared between however many players wear them — so they are
+    // deleted by "nobody is wearing this any more", not by owner. Safe for
+    // concurrent runs: a texture another run is still using has a wearer row.
+    const textures = await client.query(
+      'DELETE FROM textures t WHERE NOT EXISTS (SELECT 1 FROM avatars a WHERE a.texture_hash = t.hash)',
+    );
 
     console.log(
       `CLEAN e2e cleanup — ${deletedLobbies.rowCount} lobbies, ${deletedPlayers.rowCount} players, ` +
-        `${avatars.rowCount} avatars, ${members.rowCount} memberships (${Date.now() - t0}ms)`,
+        `${avatars.rowCount} avatars, ${textures.rowCount} textures, ${members.rowCount} memberships ` +
+        `(${Date.now() - t0}ms)`,
     );
   }
 } catch (err) {

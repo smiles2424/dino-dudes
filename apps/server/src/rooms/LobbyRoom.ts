@@ -39,6 +39,7 @@ import {
   type LobbyJoinOptions,
 } from '@dino/shared';
 import { db, hasDatabase, lobbies, lobbyMembers, players } from '../db.js';
+import { closeIdleLobbies } from '../lobby-lifecycle.js';
 import { loadLobbyMembers } from '../lobby-members.js';
 import { redis } from '../redis.js';
 
@@ -393,6 +394,13 @@ export class LobbyRoom extends Room<LobbyState> {
       set.delete(this);
       if (set.size === 0) roomsByCode.delete(this.#code);
     }
+
+    // Wave 5, Chunk 5.2 — the one moment we know nobody is in this lobby is a
+    // free chance to close it *if* it has also been quiet for hours. One
+    // UPDATE, no scheduler, and it cannot close a lobby that is still in use
+    // (see `lobby-lifecycle.ts`). Fire-and-forget: a disposal must not wait on
+    // Neon, and `closeIdleLobbies` never throws.
+    if (this.#lobbyId) void closeIdleLobbies(this.#lobbyId);
   }
 
   // ── Fan-out target ───────────────────────────────────────────────────────

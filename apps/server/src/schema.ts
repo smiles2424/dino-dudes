@@ -37,6 +37,33 @@ export const players = pgTable('players', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * The drawings themselves — **content-addressed and shared** (Wave 5, Chunk 5.2).
+ *
+ * A texture is identified by the sha256 of its bytes, so the same pixels are
+ * the same row no matter how many people wear them. This table is deliberately
+ * *not* about people: it has no `player_id`. That split is the fix for the
+ * "one texture, one owner" sharp edge — `avatars.texture_hash` used to be
+ * UNIQUE, which made a second uploader of byte-identical pixels *steal* the
+ * first player's row (and leave them naked when the lobby was rehydrated).
+ */
+export const textures = pgTable('textures', {
+  /** sha256 of `bytes`, lowercase hex — the URL of `GET /api/textures/:hash`. */
+  hash: text('hash').primaryKey(),
+  /** Processed 1024x1024 PNG (see the Texture Spec in `@dino/shared`). */
+  bytes: bytea('bytes').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Who is wearing which drawing — **one row per player** (Wave 5, Chunk 5.2).
+ *
+ * `player_id` is UNIQUE: a retake replaces what a child is wearing rather than
+ * accumulating history, which is also what makes `loadLobbyMembers` a plain
+ * join instead of a "latest per player" fold. `texture_hash` is an ordinary
+ * (non-unique) FK into {@link textures}, so any number of players can wear the
+ * same pixels at once.
+ */
 export const avatars = pgTable(
   'avatars',
   {
@@ -48,17 +75,18 @@ export const avatars = pgTable(
       .references(() => players.id),
     /** `'trex' | 'stego' | 'raptor' | 'bronto'` — validated by `@dino/shared`, not the DB. */
     modelSlug: text('model_slug').notNull(),
-    /** Processed 1024x1024 PNG (see the Texture Spec in `@dino/shared`). */
-    texture: bytea('texture').notNull(),
-    /** sha256 of `texture`, lowercase hex — the content address used by `GET /api/textures/:hash`. */
-    textureHash: text('texture_hash').notNull(),
+    /** The content address of the drawing this player is wearing. */
+    textureHash: text('texture_hash')
+      .notNull()
+      .references(() => textures.hash),
     /** Optional original phone photo, kept so a texture can be reprocessed later. */
     sourcePhoto: bytea('source_photo'),
+    /** When this player last changed what they are wearing. */
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex('avatars_texture_hash_key').on(t.textureHash),
-    index('avatars_player_id_idx').on(t.playerId),
+    uniqueIndex('avatars_player_id_key').on(t.playerId),
+    index('avatars_texture_hash_idx').on(t.textureHash),
   ],
 );
 
@@ -95,9 +123,11 @@ export type Player = typeof players.$inferSelect;
 export type NewPlayer = typeof players.$inferInsert;
 export type Avatar = typeof avatars.$inferSelect;
 export type NewAvatar = typeof avatars.$inferInsert;
+export type Texture = typeof textures.$inferSelect;
+export type NewTexture = typeof textures.$inferInsert;
 export type Lobby = typeof lobbies.$inferSelect;
 export type NewLobby = typeof lobbies.$inferInsert;
 export type LobbyMember = typeof lobbyMembers.$inferSelect;
 export type NewLobbyMember = typeof lobbyMembers.$inferInsert;
 
-export const schema = { players, avatars, lobbies, lobbyMembers };
+export const schema = { players, textures, avatars, lobbies, lobbyMembers };

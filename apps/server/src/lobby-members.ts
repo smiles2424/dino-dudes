@@ -13,7 +13,7 @@
  * a brand-new room. Without hydration their own drawing would be missing from
  * the world they just walked into.
  */
-import { desc, eq, inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { ModelSlugSchema, TextureHashSchema, type ModelSlug, type TextureHash } from '@dino/shared';
 import { avatars, db, lobbyMembers, players } from './db.js';
 
@@ -27,12 +27,13 @@ export interface PersistedMember {
 }
 
 /**
- * Lobby membership, oldest first, each with their **current** dino (their most
- * recent avatar row).
+ * Lobby membership, oldest first, each with their **current** dino.
  *
- * The avatars are fetched in one extra query and folded in memory: a lobby is
- * party-sized (tens of people), so a correlated "latest per player" subquery
- * would be complexity for nothing.
+ * Since the Chunk 5.2 split `avatars` holds exactly one row per player (the
+ * wearer record; `player_id` is UNIQUE), so "current dino" is a plain lookup
+ * rather than the "latest per player" fold this used to do. The avatars are
+ * still fetched in a second query and joined in memory: a lobby is party-sized
+ * (tens of people), so the round trip is cheaper than the join complexity.
  */
 export async function loadLobbyMembers(lobbyId: string): Promise<PersistedMember[]> {
   const memberRows = await db()
@@ -53,7 +54,6 @@ export async function loadLobbyMembers(lobbyId: string): Promise<PersistedMember
       playerId: avatars.playerId,
       modelSlug: avatars.modelSlug,
       textureHash: avatars.textureHash,
-      createdAt: avatars.createdAt,
     })
     .from(avatars)
     .where(
@@ -61,18 +61,12 @@ export async function loadLobbyMembers(lobbyId: string): Promise<PersistedMember
         avatars.playerId,
         memberRows.map((m) => m.playerId),
       ),
-    )
-    .orderBy(desc(avatars.createdAt));
+    );
 
-  const latest = new Map<string, { modelSlug: string; textureHash: string }>();
-  for (const row of avatarRows) {
-    if (!latest.has(row.playerId)) {
-      latest.set(row.playerId, { modelSlug: row.modelSlug, textureHash: row.textureHash });
-    }
-  }
+  const worn = new Map(avatarRows.map((row) => [row.playerId, row]));
 
   return memberRows.map((member) => {
-    const avatar = latest.get(member.playerId);
+    const avatar = worn.get(member.playerId);
     // A slug/hash that fails the contract (hand-edited row, older schema) is
     // reported as "no avatar yet" rather than failing the whole request.
     const slug = avatar ? ModelSlugSchema.safeParse(avatar.modelSlug) : null;
