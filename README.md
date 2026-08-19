@@ -6,6 +6,10 @@ Draw a dinosaur on paper, photograph it, and watch it come alive in a shared 3D 
   Done. Start here (agents and humans alike).
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — full architecture: stack choices, data
   flows, database schema, Redis keyspace, testing strategy.
+- **[docs/DEPLOY.md](docs/DEPLOY.md)** — putting it online: server container on Render, static
+  client on Netlify, which secrets go where, and why it must run **one** server instance.
+- **[docs/DRY-RUN-CHECKLIST.md](docs/DRY-RUN-CHECKLIST.md)** — the human rehearsal, locally or
+  against the deployed URLs.
 
 ## Setup
 

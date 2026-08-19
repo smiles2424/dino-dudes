@@ -1,0 +1,66 @@
+# Netlify — the web client (Wave 5, Chunk 5.3).
+#
+# The client is a plain Vite static build: no server, no functions, no runtime
+# config. Everything it knows about the backend is baked in at BUILD time by
+# `VITE_API_URL` (and optionally `VITE_WS_URL`), which is the one thing that
+# surprises people — changing the server URL means a REBUILD, not a restart.
+# Set them in Netlify → Site configuration → Environment variables, then
+# "Clear cache and deploy site".
+#
+# Netlify over Vercel for the same reason Render won on the server side: the
+# whole deploy is a repo connect plus two environment variables in a form, and
+# `netlify.toml` covers the monorepo, the SPA rewrite and the caching in one
+# file. The Vercel equivalent is in docs/DEPLOY.md.
+
+[build]
+  # The repo root — this is a pnpm workspace and @dino/web depends on
+  # @dino/shared and @dino/pipeline by workspace link, so a site "base" of
+  # apps/web would not install.
+  base = "."
+  command = "pnpm install --frozen-lockfile && pnpm --filter @dino/web... build"
+  publish = "apps/web/dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+  # Netlify enables corepack when this is set, which pins the pnpm from the
+  # root package.json's `packageManager` field.
+  NETLIFY_USE_PNPM = "true"
+
+# ── SPA routing ───────────────────────────────────────────────────────────────
+# There is no router library: `main.tsx` reads `window.location.pathname`. The
+# host therefore has to hand the same index.html to every path, or the QR-code
+# deep links break — and they are the entire product:
+#
+#   /?lobby=ABC23                       what the projector's QR code encodes
+#   /play?lobby=ABC23&name=…&playerId=… where the capture flow lands
+#   /debug/world                        the harness (ships on purpose)
+#
+# 200 (rewrite) not 301: the URL the phone shows must keep its query string.
+# Netlify serves real files first, so /assets/*, /debug/world.json and
+# /debug/textures/* are unaffected by this rule.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# ── Caching ───────────────────────────────────────────────────────────────────
+# Thirty phones open this site inside two minutes. Vite content-hashes every
+# file under /assets, so they are safe to pin forever — that includes the
+# ~843 kB `three` chunk, which the second class then never downloads again.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# index.html is the only mutable entry point and must never be cached, or a
+# redeploy leaves phones pointing at asset hashes that no longer exist.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+# The world harness's fixtures are not content-hashed.
+[[headers]]
+  for = "/debug/*"
+  [headers.values]
+    Cache-Control = "public, max-age=300"

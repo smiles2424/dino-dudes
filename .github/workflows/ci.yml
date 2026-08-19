@@ -106,3 +106,81 @@ jobs:
           path: assets/templates/
           retention-days: 7
           if-no-files-found: ignore
+
+  # ── Deploy (Wave 5, Chunk 5.3) ─────────────────────────────────────────────
+  # Only on a push to `main`, and only AFTER build + test + e2e are green — that
+  # ordering is the whole point of not letting Render/Netlify auto-deploy on
+  # push themselves (`autoDeploy: false` in render.yaml).
+  #
+  # Deploy *hooks*, not CLI logins: a hook is one secret URL per host, it needs
+  # no account credentials in CI, it cannot do anything except redeploy the
+  # branch the host already tracks, and it is revoked by rotating the URL. That
+  # is the right blast radius for a project whose CI also runs forked PRs.
+  #
+  # With no hook secrets configured (a fresh clone, or a fork) this job runs,
+  # reports SKIP in the summary, and passes. Nothing here can fail a build that
+  # simply has not been deployed anywhere yet.
+  deploy:
+    name: deploy · main only, skipped without hooks
+    needs: build-test-e2e
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # `secrets` is not available in a job-level `if:`, so the gate is a step.
+      - name: Check for deploy hooks
+        id: gate
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          NETLIFY_BUILD_HOOK_URL: ${{ secrets.NETLIFY_BUILD_HOOK_URL }}
+        run: |
+          server=false; web=false
+          if [ -n "$RENDER_DEPLOY_HOOK_URL" ]; then server=true; fi
+          if [ -n "$NETLIFY_BUILD_HOOK_URL" ]; then web=true; fi
+          echo "server=$server" >> "$GITHUB_OUTPUT"
+          echo "web=$web" >> "$GITHUB_OUTPUT"
+          if [ "$server" = false ] && [ "$web" = false ]; then
+            echo "### Deploy SKIPPED — no deploy hooks configured" >> "$GITHUB_STEP_SUMMARY"
+            echo "Add \`RENDER_DEPLOY_HOOK_URL\` and/or \`NETLIFY_BUILD_HOOK_URL\` in Settings → Secrets → Actions. See docs/DEPLOY.md." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Deploy server (Render)
+        if: steps.gate.outputs.server == 'true'
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$HOOK")
+          echo "Render deploy hook → HTTP $code"
+          [ "$code" -ge 200 ] && [ "$code" -lt 400 ]
+          echo "Server deploy triggered on Render (HTTP $code)." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deploy web (Netlify)
+        if: steps.gate.outputs.web == 'true'
+        env:
+          HOOK: ${{ secrets.NETLIFY_BUILD_HOOK_URL }}
+        run: |
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST -d '{}' "$HOOK")
+          echo "Netlify build hook → HTTP $code"
+          [ "$code" -ge 200 ] && [ "$code" -lt 400 ]
+          echo "Web build triggered on Netlify (HTTP $code)." >> "$GITHUB_STEP_SUMMARY"
+
+      # Best-effort only. Both hosts build the image/site themselves and take
+      # minutes to do it, so a hard assertion here would just be a flaky one.
+      # Set the repository VARIABLE `DEPLOY_SERVER_URL` (not a secret — it is a
+      # public URL) to get the confirmation line in the run summary.
+      - name: Smoke the deployed server
+        if: steps.gate.outputs.server == 'true' && vars.DEPLOY_SERVER_URL != ''
+        continue-on-error: true
+        env:
+          URL: ${{ vars.DEPLOY_SERVER_URL }}
+        run: |
+          for i in $(seq 1 40); do
+            body=$(curl -fsS --max-time 10 "$URL/healthz" 2>/dev/null) && {
+              echo "healthz: $body"
+              echo "\`$URL/healthz\` → $body" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            }
+            sleep 15
+          done
+          echo "no healthy /healthz within 10 minutes — check the Render dashboard"
+          exit 1

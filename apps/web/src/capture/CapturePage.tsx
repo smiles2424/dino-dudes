@@ -23,7 +23,7 @@
  * `playerId` the upload returns is passed on to `/play` so the room adopts the
  * persisted player instead of minting a second dino for the same person.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import {
   CORNER_LABELS,
   LobbyCodeSchema,
@@ -36,9 +36,28 @@ import { PipelineError } from '@dino/pipeline';
 import { ApiClientError, fetchLobby, uploadAvatar } from '../api.js';
 import { captureTexture, type CapturedTexture } from './photo.js';
 import { DinoSilhouette } from './DinoSilhouette.js';
-import { PreviewStage } from './PreviewStage.js';
 
 type Step = 'details' | 'model' | 'photo' | 'preview';
+
+/**
+ * The preview is the only 3D thing on this page, and it is the *last* of four
+ * steps — so three.js has no business being in the bundle the phone parses
+ * before it can show "Who are you?" (Chunk 5.3).
+ *
+ * `warmPreview()` starts the download as soon as the child picks a dinosaur,
+ * which buys the whole photograph-and-process step (seconds) of head start; by
+ * the time the pipeline finishes, the chunk is in the HTTP cache and the
+ * Suspense fallback below never paints. The import is idempotent — the browser
+ * and the module registry both dedupe it — so calling it on every render of the
+ * model step is free.
+ */
+const PreviewStage = lazy(async () => ({
+  default: (await import('./PreviewStage.js')).PreviewStage,
+}));
+
+function warmPreview(): void {
+  void import('./PreviewStage.js');
+}
 
 /** What went wrong with a photo: markers we can explain, or anything else. */
 type Failure =
@@ -78,6 +97,12 @@ export function CapturePage(): JSX.Element {
 
   // Every capture holds an object URL for a ~1 MB PNG; drop the old one as
   // soon as it is replaced, and on unmount.
+  // Start pulling the renderer down the moment the child leaves step 1 — see
+  // `warmPreview` above. Nothing depends on it resolving.
+  useEffect(() => {
+    if (step !== 'details') warmPreview();
+  }, [step]);
+
   const capturedUrl = captured?.url;
   useEffect(
     () => () => {
@@ -361,12 +386,20 @@ export function CapturePage(): JSX.Element {
       {step === 'preview' && captured ? (
         <div className="card capture-card" data-testid="capture-preview">
           <h2>Meet your dinosaur</h2>
-          <PreviewStage
-            name={name}
-            modelSlug={modelSlug}
-            textureUrl={captured.url}
-            textureKey={captured.hash ?? 'capture-preview-texture'}
-          />
+          <Suspense
+            fallback={
+              <p className="processing" role="status">
+                <Spinner label="Building your dinosaur…" />
+              </p>
+            }
+          >
+            <PreviewStage
+              name={name}
+              modelSlug={modelSlug}
+              textureUrl={captured.url}
+              textureKey={captured.hash ?? 'capture-preview-texture'}
+            />
+          </Suspense>
 
           {captured.warnings.map((warning) => (
             <p key={warning} className="warning" data-testid="capture-warning" data-warning={warning}>

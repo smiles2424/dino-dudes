@@ -1,0 +1,26 @@
+# Keep the build context small and, more importantly, keep secrets and host
+# node_modules out of it. The Dockerfile copies manifests explicitly and
+# installs inside the image; anything a host install produced is wrong there
+# (wrong platform for esbuild/msgpackr-extract native builds).
+node_modules
+**/node_modules
+**/dist
+**/.turbo
+.turbo
+
+# Secrets — never in a layer.
+.env
+.env.*
+!.env.example
+
+.git
+.github
+.claude
+e2e/playwright-report
+e2e/test-results
+assets/templates
+docs
+PLAN.md
+README.md
+Dockerfile
+.dockerignore

@@ -172,7 +172,7 @@ build + `pnpm test --force` + cumulative `pnpm e2e` before the next launches.
   (`pnpm build` clean · `pnpm test --force` 67/67 · `pnpm e2e` 12/12).
 - **Human checkpoint:** real paper-to-screen dry run with 3–5 people.
 
-### Wave 5 — Hardening & deploy  `[~] in progress (5.1 done)` *(3 opus agents, SEQUENTIAL chunks, one branch)*
+### Wave 5 — Hardening & deploy  `[x] done` *(3 opus agents, SEQUENTIAL chunks, one branch)*
 Branch: `wave-5/hardening` — each chunk gates on build + `pnpm test --force` + cumulative
 `pnpm e2e` before the next launches. This wave also closes the open Follow-up checks below.
 
@@ -207,11 +207,21 @@ Branch: `wave-5/hardening` — each chunk gates on build + `pnpm test --force` +
       50 clients 2–41 ms, 2.1 patches/s per client, server RSS 82 MB flat.*
 
 **Chunk 5.3 — deploy readiness** *(1 opus agent)*
-- [ ] Server containerized/deployable to Railway/Fly/Render (Dockerfile + config), client
+- [x] Server containerized/deployable to Railway/Fly/Render (Dockerfile + config), client
       static build for Vercel/Netlify; production env documented (`.env.example` parity)
-- [ ] CI deploy workflow on `main`, gated on deploy secrets (skips cleanly without)
-- [ ] Code-split `/play` (1.3 MB bundle → faster phone first-load)
-- **Gate (whole wave):** full cumulative suite green; loadtest numbers recorded.
+      — *multi-stage root `Dockerfile` (pnpm-workspace aware, `pnpm deploy --legacy --prod`
+      prunes to 231 prod packages), boot = migrate-then-serve, `/healthz` HEALTHCHECK;
+      `render.yaml` (`numInstances: 1`) for the server and `netlify.toml` (SPA rewrite +
+      immutable asset caching) for the client; `docs/DEPLOY.md` has Fly/Vercel equivalents.*
+- [x] CI deploy workflow on `main`, gated on deploy secrets (skips cleanly without)
+      — *`deploy` job, `needs: build-test-e2e`, push-to-`main` only, deploy-hook URLs
+      (`RENDER_DEPLOY_HOOK_URL` / `NETLIFY_BUILD_HOOK_URL`) rather than CLI logins.*
+- [x] Code-split `/play` (1.3 MB bundle → faster phone first-load)
+      — *`/`'s eager JS went **1292 kB → 270 kB (372 kB → 87 kB gzipped, −77%)**: the 3D
+      routes and the capture flow's preview step are `lazy()`, three.js is its own
+      843 kB chunk that a phone fetches while the child is typing their name.*
+- **Gate (whole wave):** `[x]` full cumulative suite green (`pnpm build` clean ·
+  `pnpm test --force` **75/75** · `pnpm e2e` **14/14**); loadtest numbers recorded (Chunk 5.2).
 - **Human checkpoint:** actual deploy (needs YOUR hosting accounts/credentials — agent
   prepares everything, human clicks); then the venue dry run on deployed URLs.
 
@@ -796,3 +806,56 @@ Append-only. Every agent adds a line when it finishes (or blocks): `date — wav
   env/`.env.example` parity check (`AVATAR_UPLOAD_LIMIT_PER_MIN`, `LOBBY_IDLE_HOURS`), and a
   container must run `db:migrate` (journal is at `0001`) before serving; (c) `pnpm test` still
   hits the real Neon/Upstash, so CI without secrets skips those files as before.
+- 2026-08-19 — Wave 5 / Chunk 5.3 (deploy readiness) — done — **the phone stopped paying for
+  three.js, and the deploy is now a form to fill in.** `/`'s eager JS went **1292 kB → 270 kB
+  (372 → 87 kB gzipped, −77 %)**. The split is two dynamic-import boundaries, not a router:
+  `main.tsx` `lazy()`s `/play` and `/debug/world`, and — the one that actually mattered —
+  `CapturePage` `lazy()`s `PreviewStage`, because the capture flow renders the *same*
+  `WorldView` in its last step, so splitting only the routes would have shipped three.js to
+  step 1 anyway. A `warmPreview()` prefetch fires the moment the child leaves "Who are you?",
+  so the renderer downloads during the name/model/photograph steps and the Suspense fallback
+  never paints. `manualChunks` pins `three` (843 kB) and `react` (143 kB) into their own
+  long-lived files — thirty phones on one Wi-Fi, and a redeploy between two classes must not
+  re-download the renderer. **Sharp edge worth remembering:** Rollup parked Vite's
+  `__vitePreload` helper *inside* the `three` chunk, which made the entry statically import it
+  and put a `modulepreload` for 843 kB in `index.html` — the split looked done and wasn't.
+  The helper now gets its own 1 kB chunk; `index.html` preloads only `react` + `preload`.
+  E2E is untouched and still **14/14**: every assertion waits on `window.__world` or a testid
+  that lives *inside* the lazy component, so Suspense is invisible to it.
+  **Container:** root `Dockerfile`, three stages (manifest-only install layer → tsc for
+  shared+server → `pnpm deploy --legacy --filter=@dino/server --prod`). `--legacy` is
+  deliberate: pnpm 10's new deploy wants `inject-workspace-packages=true`. `@dino/server` grew
+  a `files` list so the pruned tree is exactly `dist/ drizzle/ scripts/ node_modules/`.
+  Boot is `node scripts/migrate.mjs && exec node dist/index.js` — fail-fast, and `exec` so
+  node is PID 1 and still gets SIGTERM for Colyseus's graceful shutdown. **`scripts/migrate.mjs`
+  is new** because `pnpm db:migrate` is drizzle-kit, a *devDependency* the prod image must not
+  carry; it runs `drizzle-orm`'s own migrator over the same `drizzle/` folder and the same
+  `__drizzle_migrations` table (so the two are interchangeable), over `DATABASE_URL_UNPOOLED`,
+  and exits 0 with a SKIP line when there is no database at all.
+  **Docker was NOT available** (client 20.10.10, daemon not running), so the image is
+  unbuilt — but the thing it *contains* was validated on the host: `pnpm deploy` produced the
+  pruned tree (231 prod packages, no typescript/tsx/drizzle-kit), which then migrated against
+  the real Neon (`up to date in 1494ms`) and served `/healthz` **200
+  `{"redis":true,"postgres":true}`** under `NODE_ENV=production`. What is unvalidated is only
+  the Dockerfile's plumbing: base image, corepack, layer copies.
+  **Hosts:** `render.yaml` (Docker runtime, `healthCheckPath: /healthz`, `plan: starter`
+  because free instances sleep 15 min and cold-start ≈50 s = a blank projector, `autoDeploy:
+  false` so only tested pushes ship) and `netlify.toml` (`base: .`, `pnpm --filter
+  @dino/web... build`, the **SPA 200-rewrite** without which `/play?lobby=` 404s, and
+  `immutable` caching on the content-hashed `/assets/*`). `numInstances: 1` is a *correctness*
+  setting, per 5.2's note (a): rooms, the rate limiter and the texture memo are all
+  per-process. Fly `fly.toml` and Vercel `vercel.json` equivalents are in the docs.
+  **CI:** a `deploy` job, `needs: build-test-e2e`, `push` to `main` only, gated in-step
+  (secrets can't be used in a job `if:`) on `RENDER_DEPLOY_HOOK_URL` /
+  `NETLIFY_BUILD_HOOK_URL` — absent, it prints SKIP and passes. Hooks, not CLI logins: a
+  leaked hook can only redeploy the branch the host already tracks. An optional
+  `vars.DEPLOY_SERVER_URL` adds a best-effort `/healthz` line to the run summary.
+  `.env.example` gained `HOST`, `PUBLIC_WEB_URL` and `CORS_ORIGIN` (parity with `env.ts`) plus
+  the VITE-is-build-time warning; `docs/DEPLOY.md` is the human's step-by-step and points at
+  `docs/DRY-RUN-CHECKLIST.md` for the venue rehearsal on deployed URLs.
+  **Gate (closes Wave 5):** `pnpm build` clean · `pnpm test --force` **75/75** (shared 14,
+  server 29, pipeline 32) · `pnpm e2e` **14/14**. Remaining is human-only: create the Render
+  and Netlify accounts, paste the Neon/Upstash secrets, set `VITE_API_URL` then
+  `PUBLIC_WEB_URL` (the two that point the halves at each other, and the two that are silently
+  wrong if you skip a rebuild), add the two hook secrets, and run the dry-run checklist
+  against the live URLs.
