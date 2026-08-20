@@ -1,13 +1,11 @@
 /**
- * A real, valid PNG built from scratch — shared by the server integration tests.
+ * A real, valid PNG built from scratch, shared by the server integration tests.
  *
- * Why not a checked-in fixture: textures are content-addressed and shared, so
- * every test run wants *different* bytes — otherwise a run's cleanup would be
- * deleting a row another run is still using (and, before Chunk 5.2 split the
- * blob from the wearer, identical bytes actively stole the other player's
- * avatar row). Seeding the colour from a per-run id gives each run its
- * own content address while keeping the image a smooth gradient — a noise image
- * would not compress and would blow past the Texture Spec's 2 MB cap.
+ * Not a checked-in fixture because textures are content-addressed: every run
+ * needs *different* bytes, or one run's cleanup deletes a row another run is
+ * still using. Seeding the colour from a per-run id gives each run its own
+ * content address while keeping the image a smooth gradient — noise would not
+ * compress and would blow past the Texture Spec's 2 MB cap.
  */
 import { deflateSync } from 'node:zlib';
 
@@ -54,12 +52,12 @@ export function makePng(size, seed) {
     }
   }
   /*
-   * Stamp the seed into the first row's blue channel (Wave 4, Chunk 4.1).
+   * Stamp the seed into the first row's blue channel.
    *
    * `tint` is one byte, so the generator could only ever produce 256 distinct
    * images — and `avatars.texture_hash` is UNIQUE, so two runs with colliding
    * tints silently share one avatar row and `avatar.playerId` stops matching
-   * `player.id` (the documented consequence in the Chunk 3.2 log note). Writing
+   * `player.id`, which is a documented consequence. Writing
    * the seed's own bytes in makes distinct seeds mean distinct content
    * addresses, always. ~1/256 of runs used to trip over this.
    */

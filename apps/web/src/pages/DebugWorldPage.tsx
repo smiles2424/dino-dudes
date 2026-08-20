@@ -1,24 +1,13 @@
 /**
- * `/debug/world` — the WS-C development harness AND the E2E assertion surface.
+ * `/debug/world` — the development harness and the E2E assertion surface. It
+ * renders the real {@link WorldView} from a static JSON state plus local
+ * texture files: no backend, no Colyseus, no pipeline, so anything that works
+ * here works in a live room.
  *
- * It renders the real {@link WorldView} from a **static JSON state** plus
- * **local texture files**: no backend, no Colyseus, no pipeline. Wave 3/4 will
- * feed the very same component from a live room, so anything that works here
- * works there.
- *
- * Query parameters
- *   ?static=1        freeze motion at t = 0, pin DPR/AA, fixed-size canvas —
- *                    the mode screenshots are taken in.
- *   ?size=800x500    render the canvas at exactly this size, whatever the
- *                    window is — the camera fits itself to the canvas aspect,
- *                    and this is how a test exercises a phone-shaped frame.
- *   ?state=/path     load a different same-origin state JSON (default
- *                    `/debug/world.json`).
- *
- * Test surface: `window.__world` (see `world/world-debug.ts`), including
- * `window.__world.setTexture(playerId, hash)` which repoints one dino at
- * another texture at runtime — the same thing an `avatar-updated` broadcast
- * will do in the real game.
+ * `?static=1` freezes motion and pins DPR/AA for screenshots, `?size=800x500`
+ * forces an exact canvas size whatever the window is, and `?state=/path` loads
+ * a different same-origin state file. `window.__world.setTexture()` repoints one
+ * dino at another texture, exactly as an `avatar-updated` broadcast does live.
  *
  * This page ships in production builds on purpose.
  */
@@ -142,10 +131,10 @@ function readParams(): {
   // Same-origin paths only — this page is shipped to production.
   const stateUrl = requested && requested.startsWith('/') ? requested : DEFAULT_STATE_URL;
   /*
-   * `?size=WxH` pins the canvas to an exact pixel size (Wave 5, Chunk 5.1).
-   * The camera frames itself from the canvas *aspect*, and the shape that
-   * needs proving is a phone in portrait — which this page's own CSS never
-   * produces. Capped so a typo cannot ask the GPU for a 100 000 px buffer.
+   * `?size=WxH` pins the canvas to an exact pixel size. The camera frames itself
+   * from the canvas *aspect*, and the shape that needs proving is a phone in
+   * portrait — which this page's own CSS never produces. Capped so a typo cannot
+   * ask the GPU for a 100 000 px buffer.
    */
   const match = /^(\d{2,4})x(\d{2,4})$/.exec(params.get('size') ?? '');
   const size = match

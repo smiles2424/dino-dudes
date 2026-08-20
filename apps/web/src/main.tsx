@@ -7,22 +7,14 @@ const container = document.getElementById('root');
 if (!container) throw new Error('#root not found');
 
 /**
- * Routing is a lookup table on purpose: the app has three entry points and no
- * router dependency is worth it yet. Chunk 4.2 can swap this for a real router
- * without touching the world code.
+ * Routing is a lookup table on purpose: three entry points, and no router
+ * dependency is worth it yet.
  *
- *   /             landing page (the capture flow; join links are `/?lobby=CODE`)
- *   /play         the live game view / projector screen (`?lobby=CODE`)
- *   /debug/world  the offline world harness — E2E #2 depends on it
- *
- * **Chunk 5.3 — code splitting.** `/` is the page a child opens on a phone on
- * school Wi-Fi, and it is the only one whose load time is in the 5 s promise.
- * three.js + @react-three are ~1 MB of that bundle, so both 3D routes are
- * `lazy()` here and the capture flow's own 3D step (`PreviewStage`) is lazy
- * inside `CapturePage` — the phone downloads the renderer *while the child is
- * typing their name and photographing the sheet*, not before the first paint.
- * The route split is what keeps the eager entry chunk small; the prefetch in
- * `CapturePage` is what keeps the preview instant anyway.
+ * Both 3D routes are `lazy()` because `/` is the page a child opens on school
+ * Wi-Fi and the only one inside the 5 s promise, while three.js and
+ * @react-three are ~1 MB. Together with the lazy `PreviewStage` inside
+ * `CapturePage`, the phone downloads the renderer while the child is typing
+ * their name rather than before the first paint.
  */
 const PlayPage = lazy(async () => ({ default: (await import('./pages/PlayPage.js')).PlayPage }));
 const DebugWorldPage = lazy(async () => ({

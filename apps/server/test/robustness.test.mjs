@@ -1,16 +1,14 @@
 /**
- * Chunk 5.2 — rate limiting and lobby lifecycle.
+ * Rate limiting and lobby lifecycle — two halves, deliberately different in
+ * kind.
  *
- * Two halves, deliberately different in kind:
+ * The token bucket is pure and gets an injected clock, so the refill maths is
+ * asserted without a single `setTimeout`. It has to be tested here rather than
+ * through HTTP precisely because the limiter is switched off under `node --test`
+ * so the E2E suite can upload as fast as it likes.
  *
- *  • the **token bucket** is pure and gets an injected clock, so this asserts
- *    the actual refill maths without a single `setTimeout`. (The limiter is
- *    switched off under `NODE_ENV=test` / `node --test` so the E2E suite can
- *    upload as fast as it likes — which is exactly why it has to be tested
- *    here, at the unit, rather than through HTTP.)
- *  • the **idle sweep** runs against the real Neon, because "did this UPDATE
- *    match the right rows" is a question only Postgres can answer. It skips
- *    without credentials, like every other DB test in this repo.
+ * The idle sweep runs against real Neon, because "did this UPDATE match the
+ * right rows" is a question only Postgres can answer.
  */
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';

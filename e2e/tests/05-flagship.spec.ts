@@ -1,56 +1,15 @@
 /**
- * E2E #5 — the flagship (Wave 4, Chunk 4.3).
+ * The flagship: the whole product end to end with nothing stubbed. A
+ * Pixel-sized context walks the real capture flow and its dinosaur must appear
+ * on a spectating desktop context within {@link FANOUT_BUDGET_MS} of the upload
+ * being accepted.
  *
- * **The whole product, end to end, with nothing stubbed.** Two browsers, one
- * lobby, one real server, one real Neon, one real Upstash:
- *
- *   POST /api/lobbies                        (real Fastify → real Neon)
- *     → context A (desktop) opens `/play?lobby=CODE` — the projector, spectating
- *     → A's lobby already has one drawing, uploaded over plain HTTP
- *     → context B (Pixel-sized) opens `/?lobby=CODE` and walks the REAL capture
- *       flow: name → dinosaur → a REAL fixture photo through `@dino/pipeline`
- *       IN THE BROWSER → preview on the real 3D model → confirm
- *     → POST /api/avatars → Postgres → Redis → Colyseus → A's WebSocket
- *     → **A shows B's dinosaur wearing B's drawing within 5 s of the upload
- *       being accepted**, and B lands in the same world
- *
- * Three things this proves that no earlier test does:
- *
- *   1. **Two independent clients, one world — including while it moves.** A and
- *      B report byte-identical synced positions/headings for every dino
- *      (`window.__world.players`), agree on the room's motion seed and epoch to
- *      within a few ms of clock skew, compute the same trajectory for a future
- *      instant, and render the *moving* dino in the same place at the same
- *      wall-clock moment (`window.__world.poses`, contract version 3). That is
- *      all of PLAN.md's "two-client world consistency" follow-up, with the
- *      dinosaurs actually walking — the half spawn state could never prove.
- *   2. **Two clients, one world — in pixels.** Both browsers also open the same
- *      lobby in `?static=1` (motion frozen, fixed 800×500 canvas, DPR 1) and
- *      the two rendered canvases are compared cell by cell.
- *   3. **Distinct drawings stay distinct.** `POST /api/avatars` upserts on the
- *      UNIQUE `texture_hash`, so two players uploading identical bytes share
- *      (and steal) one avatar row. A uploads a run-seeded synthetic PNG, B
- *      uploads the pipeline's output for a real photo — different bytes,
- *      different hashes, two dinos wearing two different skins. (See
- *      {@link GOOD_PHOTO}: the same rule is why this spec must not reuse E2E
- *      #4's fixture photo.)
- *
- * **Why no committed screenshot baseline** (E2E #2 has one; this cannot):
- * spawn positions and headings are assigned by the *server* at join time and
- * differ every run, so no single golden PNG can be valid — the frame is
- * legitimately different on every execution. What is asserted instead is a
- * canvas *diff* between frames that must agree: a downsampled luminance
- * signature, read out of the WebGL buffer (`preserveDrawingBuffer` is on in
- * frozen mode), which must be bit-stable while nothing changes and must match
- * across the two clients. The before/after-B diff is measured and logged but
- * NOT asserted — see the note at the assertion. Every frame is attached to the
- * report for a human to eyeball.
- *
- * **Secrets**: everything here needs Neon, so with no `.env` the test skips
- * rather than fails — the same `/healthz` probe E2E #3 and #4 use.
- *
- * Nothing here modifies E2E #1–#4. `window.__world`'s type comes from the
- * `declare global` in `02-world.spec.ts` — one program, one contract.
+ * What only this spec proves is that two independent clients render *one*
+ * world: while it moves (shared seed, epoch and clock, so they agree on a
+ * future trajectory and on the live pose of a walking dino) and in pixels.
+ * There is no committed baseline, unlike E2E #2 — spawn points are
+ * server-assigned and differ every run, so the canvas comparison is between two
+ * frames that must agree rather than against a golden PNG.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
@@ -73,22 +32,18 @@ import { makePng } from '../support/fixture-png.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 /**
- * A good photo taken at a tilt — what a nine-year-old's arm actually produces,
- * and a golden fixture the pipeline is expected to deskew cleanly.
+ * A good photo taken at a tilt — what a nine-year-old's arm actually produces.
  *
- * Deliberately NOT `photo-01-flat.png` (E2E #4's happy path): a fixture always
- * yields the same texture bytes, `avatars.texture_hash` is UNIQUE and
- * `POST /api/avatars` upserts on it, so the last uploader of a given set of
- * pixels owns the row. These two specs run in parallel, and when one steals the
- * other's row the loser's lobby — rebuilt from Postgres if its room was
- * disposed — hydrates them with no drawing. One fixture per spec, no sharing.
+ * Deliberately NOT E2E #4's fixture: a fixture always yields the same texture
+ * bytes, `avatars.texture_hash` is UNIQUE and the upload upserts on it, so the
+ * last uploader of a given set of pixels owns the row. These two specs run in
+ * parallel, and the loser's lobby then hydrates with no drawing at all.
  */
 const GOOD_PHOTO = path.join(repoRoot, 'assets', 'fixtures', 'photo-02-tilted.png');
 
 /**
- * Tags every row this run creates so `scripts/cleanup-e2e-rows.mjs` can find
- * them. The full uuid seeds A's texture, so its content address is unique per
- * run (`avatars.texture_hash` is UNIQUE).
+ * Tags every row this run creates for `scripts/cleanup-e2e-rows.mjs`. The full
+ * uuid seeds A's texture, so its content address is unique per run.
  */
 const RUN_UUID = randomUUID();
 const RUN_ID = RUN_UUID.slice(0, 8);
@@ -97,7 +52,7 @@ const NAME_B = `e2e-${RUN_ID}-b`;
 const MODEL_A = 'raptor';
 const MODEL_B = 'stego';
 
-/** The Wave 4 promise: once the upload is accepted, it is on the projector. */
+/** The promise: once the upload is accepted, it is on the projector. */
 const FANOUT_BUDGET_MS = 5000;
 /** Decode + downscale + the whole in-browser pipeline (E2E #4 measures ~1.4 s). */
 const PIPELINE_BUDGET_MS = 20_000;
@@ -105,28 +60,25 @@ const PIPELINE_BUDGET_MS = 20_000;
 const JOIN_BUDGET_MS = 30_000;
 
 /**
- * Positions cross the wire as float32 and are compared between two clients that
- * decoded them independently, so this is about representation, not physics —
- * millimetres in a world measured in metres.
+ * Positions cross the wire as float32 and are decoded independently by the two
+ * clients, so this is about representation, not physics — millimetres in a
+ * world measured in metres.
  */
 const POSITION_TOLERANCE = 1e-4;
 
 /**
  * How far apart the two clients' estimates of the *server's* clock may be.
- *
- * Both browsers run on this machine, so this is pure estimation error: a page
- * that processes a patch late under six parallel SwiftShader workers reads an
- * offset that is too small until a later tick corrects it. 400 ms of skew moves
- * a wandering dino by at most 400 ms × 0.47 m/s ≈ 19 cm; the number is printed
- * on every run and has measured well under half of this on an idle machine.
+ * Both browsers are on this machine, so this is pure estimation error: a page
+ * that processes a patch late reads an offset that is too small until a later
+ * tick corrects it. 400 ms moves a wandering dino by ≈19 cm.
  */
 const MAX_CLOCK_SKEW_MS = 400;
 /**
  * How far apart the two clients may render the same *moving* dino, sampled at
- * the same wall-clock moment. Deliberately a fixed distance rather than one
- * derived from the observed skew (which would excuse any amount of drift):
- * with page-local timing — the pre-Wave-5 behaviour — two browsers loaded
- * seconds apart sit at different phases of the same orbit and this is metres.
+ * one wall-clock moment. A fixed distance rather than one derived from the
+ * observed skew, which would excuse any amount of drift: with page-local timing
+ * two browsers loaded seconds apart sit at different phases of one orbit, and
+ * this is metres.
  */
 const LIVE_POSITION_TOLERANCE = 0.35;
 
@@ -135,16 +87,15 @@ const SIGNATURE = { width: 64, height: 40 };
 /** A cell counts as changed when it moves by more than this (0–255). */
 const CELL_CHANGE_THRESHOLD = 8;
 /**
- * Sky gradient + checkered ground + trees + dinos: a real frame has hundreds of
- * distinct luminance levels among its 2560 cells. A blank, flat or failed
- * render has a handful, so 40 fails loudly without being fussy.
+ * A real frame (sky gradient, checkered ground, trees, dinos) has hundreds of
+ * distinct luminance levels among its 2560 cells; a blank or failed render has
+ * a handful. Catches a dead canvas without being fussy.
  */
 const MIN_DISTINCT_LEVELS = 40;
 /**
- * Two clients rendering one state should agree exactly (same rasteriser, same
- * fixed canvas, same frozen clock). A few cells of slack absorbs texture-upload
- * timing inside the GPU driver without letting a genuinely different world —
- * a missing dino is ≈100 cells — through.
+ * Two clients rendering one state should agree exactly — same rasteriser, same
+ * fixed canvas, same frozen clock. The slack absorbs texture-upload timing
+ * inside the GPU driver; a genuinely missing dino is ≈100 cells.
  */
 const MAX_CROSS_CLIENT_CELLS = 10;
 
@@ -235,14 +186,12 @@ test('two browsers, one lobby: a phone drawing lands on the projector', async ({
   let phone: BrowserContext | null = null;
 
   try {
-    // ── 1. A real lobby, created the way the host's device creates one ───────
     const created = await request.post(`${SERVER_BASE_URL}/api/lobbies`, {
       data: { name: `e2e ${RUN_ID}` },
     });
     expect(created.status(), await created.text()).toBe(201);
     const { lobby, joinUrl } = CreateLobbyResponseSchema.parse(await created.json());
 
-    // ── 2. Somebody has already drawn: a plain HTTP upload, no browser ───────
     // Run-seeded bytes, deliberately NOT the fixture photo's output: identical
     // bytes would upsert onto one avatars row and B would steal A's drawing.
     const pngA = makePng(1024, RUN_UUID);
@@ -260,17 +209,14 @@ test('two browsers, one lobby: a phone drawing lands on the projector', async ({
     expect(avatarA.avatar.textureHash).toBe(hashA);
     const playerIdA = avatarA.player.id;
 
-    // ── 3. The projector: a desktop browser spectating the lobby ─────────────
     projector = await browser.newContext({ viewport: { width: 1000, height: 800 }, deviceScaleFactor: 1 });
     const projectorPage = await projector.newPage();
     watchForErrors(projectorPage, 'projector', failures);
     /*
-     * How long the projector spends *downloading* a drawing, separately from
-     * the socket round trip. The two together are the 5 s promise, and this
-     * used to be nearly all of it (a ~1 MB PNG fetched from Upstash or Neon
-     * over the public internet, 0.8–3.9 s) until the server started memoising
-     * texture bytes in process — it should now read tens of milliseconds.
-     * Printed so the dry run has a number to look at rather than a feeling.
+     * How long the projector spends *downloading* a drawing, as distinct from
+     * the socket round trip — together they are the 5 s promise. This was once
+     * nearly all of it (a ~1 MB PNG over the public internet) until the server
+     * began memoising texture bytes in process; it should now be milliseconds.
      */
     const textureFetches: number[] = [];
     projectorPage.on('requestfinished', (req) => {
@@ -281,12 +227,10 @@ test('two browsers, one lobby: a phone drawing lands on the projector', async ({
     await projectorPage.goto(`/play?lobby=${lobby.code}`);
     await waitForWorld(projectorPage, 1);
 
-    // The QR code on the screen is the link the phone is about to follow.
     const encoded = await projectorPage.getByTestId('lobby-qr').getAttribute('data-qr-value');
     expect(encoded).toContain(`lobby=${lobby.code}`);
     expect(new URL(joinUrl).searchParams.get('lobby')).toBe(lobby.code);
 
-    // ── 4. The phone: the real capture flow, on a real photo ─────────────────
     phone = await browser.newContext({
       ...devices['Pixel 5'],
       // DPR 1: SwiftShader renders every pixel on the CPU, and a 2.6× buffer
@@ -318,7 +262,6 @@ test('two browsers, one lobby: a phone drawing lands on the projector', async ({
 
     const hashB = (await phonePage.getByTestId('capture-texture-hash').innerText()).trim();
     expect(hashB).toMatch(/^[0-9a-f]{64}$/);
-    // The two players really are wearing different drawings.
     expect(hashB).not.toBe(hashA);
     // The preview is the real renderer: the drawing is on the model already.
     await phonePage.waitForFunction(
@@ -327,7 +270,6 @@ test('two browsers, one lobby: a phone drawing lands on the projector', async ({
       { timeout: PIPELINE_BUDGET_MS },
     );
 
-    // ── 5. Confirm → the clock that matters starts when the server says yes ──
     const uploadResponse = phonePage.waitForResponse(
       (response) =>
         response.url().includes('/api/avatars') && response.request().method() === 'POST',
@@ -342,7 +284,6 @@ test('two browsers, one lobby: a phone drawing lands on the projector', async ({
     const fanoutStarted = Date.now();
     expect(response.status()).toBe(201);
 
-    // ── 6. THE ASSERTION: B's drawing is on the projector, within budget ─────
     await projectorPage.waitForFunction(
       (hash) => Object.values(window.__world?.appliedTextures ?? {}).includes(hash),
       hashB,
@@ -356,7 +297,6 @@ test('two browsers, one lobby: a phone drawing lands on the projector', async ({
     );
     expect(fanoutMs, `upload → projector took ${fanoutMs}ms`).toBeLessThan(FANOUT_BUDGET_MS);
 
-    // ── 7. The phone landed in the same world, as the same player ────────────
     await phonePage.waitForURL(/\/play\?/, { timeout: JOIN_BUDGET_MS });
     const landed = new URL(phonePage.url());
     expect(landed.searchParams.get('lobby')).toBe(lobby.code);
@@ -367,7 +307,6 @@ test('two browsers, one lobby: a phone drawing lands on the projector', async ({
     expect(playerIdB).toMatch(/^[0-9a-f-]{36}$/);
     expect(playerIdB).not.toBe(playerIdA);
 
-    // ── 8. What the projector shows: both players, both drawings ─────────────
     await projectorPage.waitForFunction(
       (args) => window.__world?.appliedTextures[args.id] === args.hash,
       { id: playerIdB, hash: hashB },
@@ -389,7 +328,6 @@ test('two browsers, one lobby: a phone drawing lands on the projector', async ({
     await expect(projectorPage.getByTestId('nameplate').filter({ hasText: NAME_B })).toBeVisible();
     await expect(projectorPage.getByTestId('lobby-status')).toHaveAttribute('data-dino-count', '2');
 
-    // ── 9. …and the phone sees the same two dinos it is standing next to ─────
     await waitForWorld(phonePage, 2);
     await phonePage.waitForFunction(
       (args) =>
@@ -399,7 +337,6 @@ test('two browsers, one lobby: a phone drawing lands on the projector', async ({
       { timeout: JOIN_BUDGET_MS },
     );
 
-    // ── 10. Two clients, one world (PLAN.md's follow-up check) ──────────────
     const phoneWorld = await phonePage.evaluate(() => ({ ...window.__world }));
     expect(Object.keys(phoneWorld.players ?? {}).sort()).toEqual([playerIdA, playerIdB].sort());
 
@@ -420,20 +357,14 @@ test('two browsers, one lobby: a phone drawing lands on the projector', async ({
       }
     }
     console.log(`[e2e#5] two-client position agreement: worst delta ${worstDelta}`);
-    // The model each player chose survived the whole trip.
     expect(world.players?.[playerIdA]?.modelSlug).toBe(MODEL_A);
     expect(world.players?.[playerIdB]?.modelSlug).toBe(MODEL_B);
 
     /*
-     * ── 10b. Two clients, one world — WHILE THE DINOS ARE MOVING ────────────
-     *
-     * This is the half of PLAN.md's "two-client world consistency" follow-up
-     * that spawn positions could never prove. Until Wave 5 the wander was
-     * seeded locally and timed from each page's own load clock, so two screens
-     * drifted apart the moment anything moved. Now the room issues the seed
-     * (`motionSeed`) and the epoch, and refreshes `serverTime` on a tick from
-     * which each client estimates its offset — so both browsers evaluate the
-     * same function of the same clock.
+     * Two clients, one world — while the dinos are MOVING: the half of world
+     * consistency that spawn positions cannot prove. The room issues the seed
+     * and epoch and refreshes `serverTime`, so both browsers evaluate the same
+     * function of the same clock rather than each drifting from its own load.
      */
     for (const [label, page] of [
       ['projector', projectorPage],
@@ -441,11 +372,10 @@ test('two browsers, one lobby: a phone drawing lands on the projector', async ({
     ] as const) {
       await page.waitForFunction(
         /*
-         * Six ticks (~3 s). One sample is not enough: the estimate is the
-         * largest `serverTime - Date.now()` seen, and a page busy compiling
-         * shaders processes its first patches late, which reads as an offset
-         * that is too *small*. Every further sample can only correct it
-         * upward, so a handful is worth waiting for.
+         * Six ticks (~3 s). The estimate is the largest `serverTime -
+         * Date.now()` seen, and a page busy compiling shaders processes its
+         * first patches late, which reads as an offset that is too *small*.
+         * Further samples can only correct it upward, so wait for a few.
          */
         () => window.__world?.motion?.source === 'server' && window.__world.motion.samples >= 6,
         undefined,
@@ -474,10 +404,9 @@ test('two browsers, one lobby: a phone drawing lands on the projector', async ({
     );
 
     /*
-     * (a) The trajectories themselves: both clients are asked what they would
-     * render for B at the same agreed motion time, seconds in the future. No
-     * frame timing, no polling skew — this is pure "do they compute the same
-     * path", and a local seed or a page-local clock fails it by metres.
+     * (a) Pure trajectory agreement: both clients are asked what they would
+     * render for B at the same motion time, seconds in the future. No frame
+     * timing involved — a local seed or a page-local clock fails this by metres.
      */
     const sampleAt = Math.round(await projectorPage.evaluate(() => window.__world?.motionTime?.() ?? 0)) + 5;
     const sample = { id: playerIdB, t: sampleAt };
@@ -494,10 +423,9 @@ test('two browsers, one lobby: a phone drawing lands on the projector', async ({
     expect(worstTrajectory, `same trajectory at t=${sampleAt}s`).toBeLessThanOrEqual(POSITION_TOLERANCE);
 
     /*
-     * (b) …and the dinos really are moving, and really are being rendered from
-     * that shared clock: sample both live `poses` maps at the same wall-clock
-     * moment. Each entry carries the motion time it was evaluated at, so the
-     * only slack allowed is the frame skew between the two browsers times the
+     * (b) …and they are really moving, really rendered from that shared clock.
+     * Each `poses` entry carries the motion time it was evaluated at, so the
+     * only slack allowed is the frame skew between the browsers times the
      * fastest a dino can walk.
      */
     const livePose = (page: Page): Promise<{ x: number; y: number; z: number; rotationY: number; t: number } | undefined> =>
@@ -531,25 +459,18 @@ test('two browsers, one lobby: a phone drawing lands on the projector', async ({
       LIVE_POSITION_TOLERANCE,
     );
 
-    // Nobody's dinosaur is outside the frame (PLAN.md's other follow-up).
     expect(await projectorPage.evaluate(() => window.__world?.offscreen)).toBe(0);
     expect(await phonePage.evaluate(() => window.__world?.offscreen)).toBe(0);
 
     /*
-     * ── 11. Two clients, one world — in pixels ──────────────────────────────
-     *
-     * Both browsers now open the SAME lobby in screenshot mode: motion frozen,
-     * a fixed 800×500 canvas, DPR 1, the same SwiftShader rasteriser. Two
-     * independent clients rendering one synchronized state must produce one
-     * picture. This holds wherever the server happened to spawn anybody, which
-     * is why it is asserted and "B's arrival changed N pixels" is not. (The
-     * ~17 % of the 4–8 m spawn ring that used to fall outside the frustum is
-     * fixed in Chunk 5.1 — the camera is fitted to the world and `offscreen`
-     * is asserted above — but a frame-diff threshold is still the wrong shape
-     * of assertion for a scene whose spawn points change every run.)
+     * Two clients, one world — in pixels. Both browsers open the SAME lobby
+     * frozen: fixed 800×500 canvas, DPR 1, one rasteriser, so two clients
+     * rendering one synchronized state must produce one picture. That holds
+     * wherever the server spawned anybody, which is why it is asserted and
+     * "B's arrival changed N cells" is not.
      *
      * Opened only now, after the timed fan-out window: two more WebGL pages
-     * fetching the same 1 MB textures would be measuring this test's own load.
+     * fetching the same textures would be measuring this test's own load.
      */
     const frozenPages = await Promise.all(
       [

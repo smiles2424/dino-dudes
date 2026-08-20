@@ -1,20 +1,15 @@
 /**
- * Chunk 3.2 integration test — the REST API over the **real** Fastify app,
- * the **real** Neon and the **real** Upstash.
+ * The REST API over the real Fastify app, the real Neon and the real Upstash:
+ * create a lobby, upload a 1024² PNG, fetch the bytes back, see the player in
+ * the lobby, re-upload the same drawing, reject bad uploads.
  *
- * It boots `buildApp()` (no port binding needed — `fastify.inject` drives the
- * full request lifecycle: routing, multipart parsing, the error handler, and
- * serialization) and walks the actual product flow:
+ * Driven with `fastify.inject`, which runs the full request lifecycle —
+ * routing, multipart parsing, the error handler, serialization — without
+ * binding a port.
  *
- *   create lobby → upload a 1024² PNG → fetch the bytes back → see the player
- *   in the lobby → re-upload the same drawing → reject bad uploads.
- *
- * Safety rules (same as Chunk 3.1's data-layer test):
- *  - everything created is tagged with a unique per-run id, so concurrent runs
- *    can't collide, and the lobby code comes from the server itself;
- *  - `after()` deletes every row/key by primary key, even after a failure;
- *  - with no credentials every test **skips** rather than fails, so CI on a
- *    forked PR (no secrets) stays green.
+ * Everything created is tagged with a per-run id so concurrent runs cannot
+ * collide, `after()` deletes every row by primary key even after a failure, and
+ * with no credentials every test skips rather than fails.
  */
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
@@ -161,7 +156,7 @@ describe('Chunk 3.2 REST API (real Fastify + Neon + Upstash)', () => {
     assert.equal(body.textureUrl, `/api/textures/${TEXTURE_HASH}`);
 
     // The bytes really landed in Postgres — in the shared, content-addressed
-    // `textures` table since Chunk 5.2, not on the wearer row.
+    // `textures` table, not on the wearer row.
     const [stored] = await db().select().from(textures).where(eq(textures.hash, TEXTURE_HASH));
     assert.ok(stored.bytes.equals(TEXTURE), 'stored texture must be byte-identical');
 
@@ -247,7 +242,7 @@ describe('Chunk 3.2 REST API (real Fastify + Neon + Upstash)', () => {
   });
 
   /**
-   * The "one texture, one owner" sharp edge, closed in Chunk 5.2.
+   * The "one texture, one owner" sharp edge.
    *
    * `avatars.texture_hash` used to be UNIQUE and the upload upserted on it, so
    * a second player sending byte-identical bytes MOVED the first player's row —

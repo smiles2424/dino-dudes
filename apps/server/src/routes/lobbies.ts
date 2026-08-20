@@ -36,9 +36,9 @@ export function serializeLobby(row: typeof lobbies.$inferSelect): CreateLobbyRes
 }
 
 /**
- * The URL a phone opens / the projector's QR code encodes. A query parameter
- * (rather than a path segment) so it works against today's single-page web app
- * and any router Wave 4 chooses.
+ * The URL a phone opens and the projector's QR code encodes. A query parameter
+ * rather than a path segment, so it works with the single-page app and with any
+ * router later.
  */
 export const joinUrlFor = (code: string): string =>
   new URL(`/?lobby=${code}`, env.PUBLIC_WEB_URL).toString();
@@ -72,8 +72,8 @@ export async function registerLobbyRoutes(app: FastifyInstance): Promise<void> {
     }
 
     // A new party starting is the natural (and rare) moment to close whatever
-    // idled out since the last one — fire-and-forget, so it never delays the
-    // projector (Chunk 5.2, `lobby-lifecycle.ts`).
+    // idled out since the last one. Fire-and-forget, so it never delays the
+    // projector.
     sweepIdleLobbiesOccasionally();
 
     const body: CreateLobbyResponse = {
@@ -95,15 +95,15 @@ export async function registerLobbyRoutes(app: FastifyInstance): Promise<void> {
 
     const [lobby] = await db().select().from(lobbies).where(eq(lobbies.code, code)).limit(1);
     if (!lobby) throw notFound(`no lobby with code ${code}`, { code });
-    // Chunk 5.2: a closed lobby is refused here rather than reported as a
-    // 200 with `closedAt` set — the client only ever wanted to know whether it
-    // can send a drawing, and `lobby_closed` is the contract's answer for "no".
+    // A closed lobby is refused here rather than reported as a 200 with
+    // `closedAt` set: the client only wants to know whether it can send a
+    // drawing, and `lobby_closed` is the contract's answer for "no".
     if (lobby.closedAt) {
       throw lobbyClosed(`lobby ${code} is closed`, { code, closedAt: lobby.closedAt.toISOString() });
     }
 
-    // Chunk 4.2 moved this query into `src/lobby-members.ts` — `LobbyRoom`
-    // now needs the identical answer to hydrate a freshly created room.
+    // Shared with `LobbyRoom`, which needs the identical answer to hydrate a
+    // freshly created room.
     const members: LobbyMemberInfo[] = (await loadLobbyMembers(lobby.id)).map((m) => ({
       playerId: m.playerId,
       name: m.name,

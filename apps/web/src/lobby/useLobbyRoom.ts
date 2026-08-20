@@ -1,27 +1,18 @@
 /**
- * `useLobbyRoom` — one live Colyseus lobby, exposed as plain render data.
+ * One live Colyseus lobby, exposed as plain render data.
  *
- * ── The texture gate ───────────────────────────────────────────────────────
- * The server does two things when someone's drawing lands: it patches
- * `players[*].textureHash` in synchronized state **and** it broadcasts
- * `avatar-updated`. The broadcast exists precisely so a client can start
- * fetching the PNG before it commits the patch, so this hook:
+ * The interesting part is the **texture gate**. The server both patches
+ * `players[*].textureHash` and broadcasts `avatar-updated`; the broadcast
+ * exists so a client can fetch the PNG *before* committing the patch. So this
+ * hook keeps rendering a player's previous hash until the new bytes are in the
+ * texture cache, then releases it — which makes `<Dino>`'s swap resolve from
+ * cache and the skin appear in the same frame it is applied. A slow or failed
+ * fetch releases the gate anyway ({@link PREFETCH_TIMEOUT_MS}): a broken
+ * drawing must show a placeholder, never stall the projector.
  *
- *   1. starts `loadWorldTexture(<the hash's URL>)` the instant the broadcast
- *      arrives (and for every already-drawn player on join);
- *   2. keeps rendering the player's *previous* hash until those bytes are in
- *      the texture cache;
- *   3. then releases the new hash, so `<Dino>`'s swap resolves from cache and
- *      the skin appears in the same frame it is applied.
- *
- * A failed or slow fetch releases the gate anyway (see `PREFETCH_TIMEOUT_MS`):
- * a broken drawing must show a placeholder dino, never stall the projector.
- *
- * ── Sharing with `/debug/world` ────────────────────────────────────────────
- * The hook's output is `PlayerState[]` + a `resolveTextureUrl` function — byte
- * for byte the props `<WorldView>` already takes from the static harness. All
- * of `window.__world` is maintained inside `WorldView`/`Dino`, so it is exactly
- * as accurate here as it is there, with no live-mode-specific bookkeeping.
+ * The output is deliberately the same `PlayerState[]` + `resolveTextureUrl`
+ * that `<WorldView>` already takes from the static harness, so live mode needs
+ * no bookkeeping of its own and `window.__world` is equally accurate in both.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -44,10 +35,9 @@ export interface LobbyConnection {
   /** Live players, ready to hand straight to `<WorldView players=…>`. */
   players: PlayerState[];
   /**
-   * The lobby's shared motion clock, ready to hand to `<WorldView motion=…>`.
-   * `null` until the room has published a seed and an epoch (or forever, if it
-   * is an older server) — in which case the wander falls back to page-local
-   * timing exactly as it did before Wave 5.
+   * The lobby's shared motion clock. `null` until the room publishes a seed and
+   * epoch — or forever against an older server, in which case the wander falls
+   * back to page-local timing.
    */
   motion: MotionSource | null;
   /** Set whenever `status` is `error`. `code` is a `ROOM_ERROR_CODES` value. */
@@ -98,11 +88,9 @@ export function useLobbyRoom(options: LobbyJoinOptions | null): LobbyConnection 
    * Re-estimate the offset between the server's clock and ours.
    *
    * `serverTime` is written immediately before the patch is serialized, so a
-   * received value is late by (at most) one network hop — which makes the
-   * *largest* offset seen the most accurate one, exactly as NTP keeps the
-   * sample with the smallest delay. That converges within one server tick and
-   * is stable thereafter; tens of milliseconds is far below what a dinosaur
-   * ambling at 0.2 rad/s can show.
+   * received value is late by at most one network hop — which makes the
+   * *largest* offset seen the most accurate, exactly as NTP keeps the sample
+   * with the smallest delay. Converges within one server tick.
    */
   const observeClock = useCallback((motion: LiveMotion): void => {
     if (motion.epoch <= 0 || motion.serverTime <= 0) return;
@@ -134,8 +122,8 @@ export function useLobbyRoom(options: LobbyJoinOptions | null): LobbyConnection 
   const key = options ? JSON.stringify(options) : null;
 
   /**
-   * `regate` and `prefetch` are mutually recursive. The ref breaks the cycle so
-   * neither has to be re-created on every render (which would re-run the join).
+   * `regate` and `prefetch` are mutually recursive; the ref breaks the cycle so
+   * neither is re-created per render, which would re-run the join.
    */
   const prefetchRef = useRef<(hash: string) => void>(() => undefined);
 

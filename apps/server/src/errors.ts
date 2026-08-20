@@ -1,11 +1,8 @@
 /**
- * Structured API errors.
- *
- * Every failure a client can see is one of `ApiErrorCodeSchema`'s codes wrapped
- * in the frozen `ApiErrorSchema` envelope, so `apps/web` can branch on
- * `error` (a stable enum) instead of parsing prose. Fastify's default error
- * shape (`{statusCode, error, message}`) does NOT match that contract, hence
- * the app-wide error handler in `app.ts`.
+ * Structured API errors. Every failure a client can see is one of
+ * `ApiErrorCodeSchema`'s codes in the frozen envelope, so `apps/web` branches on
+ * a stable enum instead of parsing prose. Fastify's own error shape does not
+ * match that contract, hence the app-wide handler in `app.ts`.
  */
 import type { ApiError, ApiErrorCode } from '@dino/shared';
 
@@ -50,9 +47,9 @@ export const rateLimited = (message: string, details?: unknown): ApiProblem =>
   new ApiProblem(429, 'rate_limited', message, details);
 
 /**
- * Used when a route needs Neon/Upstash but the process was booted without
- * credentials (CI on a forked PR). 503 + `internal` rather than a crash —
- * `/healthz` stays the place that reports *why*.
+ * For a route that needs Neon/Upstash on a process booted without credentials
+ * (CI on a forked PR). 503 rather than a crash — `/healthz` stays the place
+ * that reports *why*.
  */
 export const notConfigured = (what: string): ApiProblem =>
   new ApiProblem(503, 'internal', `${what} is not configured on this server`);

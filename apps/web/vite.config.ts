@@ -2,18 +2,13 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
 /**
- * Chunk 5.3 — the phone's first load.
+ * The phone's first load. `/` is the only route inside the 5 s promise, and the
+ * dynamic imports in `src/main.tsx` and `src/capture/CapturePage.tsx` are what
+ * actually keep three.js out of the entry chunk.
  *
- * `/` is opened by a child on school Wi-Fi and is the only route inside the 5 s
- * promise. The 3D routes (`/play`, `/debug/world`) and the capture flow's own
- * preview step are dynamic imports (see `src/main.tsx` / `src/capture/CapturePage.tsx`),
- * which is what actually keeps three.js out of the entry chunk.
- *
- * `manualChunks` then does one further thing that matters at a venue: it pins
- * three.js and React into their **own long-lived files**. Thirty phones hit the
- * same static host within a minute of each other, and a redeploy between two
- * classes must not re-download 1 MB of renderer just because a button label
- * changed — the vendor hashes only move when the dependency does.
+ * `manualChunks` then pins three.js and React into their own long-lived files:
+ * thirty phones hit the same host within a minute, and a redeploy between two
+ * classes must not re-download 1 MB of renderer because a label changed.
  */
 export default defineConfig({
   plugins: [react()],

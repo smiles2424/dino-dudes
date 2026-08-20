@@ -1,17 +1,12 @@
 /**
- * "Who is in this lobby, and what are they wearing?" — read from Postgres.
+ * "Who is in this lobby, and what are they wearing?", read from Postgres —
+ * needed both by `GET /api/lobbies/:code` and by `LobbyRoom.onCreate`.
  *
- * Two callers need exactly this (Wave 4, Chunk 4.2):
- *   • `GET /api/lobbies/:code`, so a client can render the lobby before any
- *     Colyseus state arrives;
- *   • `LobbyRoom.onCreate`, so a room created *after* people have uploaded
- *     starts with their dinos in it rather than an empty field.
- *
- * That second one is not a nicety. A lobby's room is disposed as soon as it is
- * empty (`autoDispose`), so the very first person to draw uploads over plain
- * HTTP with no room in existence, and then opens the game view — which creates
- * a brand-new room. Without hydration their own drawing would be missing from
- * the world they just walked into.
+ * The second caller is not a nicety. A room is disposed as soon as it empties,
+ * so the first person to draw uploads over plain HTTP with no room in
+ * existence, then opens the game view and creates a brand-new one. Without
+ * hydration their own drawing would be missing from the world they just
+ * walked into.
  */
 import { eq, inArray } from 'drizzle-orm';
 import { ModelSlugSchema, TextureHashSchema, type ModelSlug, type TextureHash } from '@dino/shared';
@@ -27,13 +22,12 @@ export interface PersistedMember {
 }
 
 /**
- * Lobby membership, oldest first, each with their **current** dino.
+ * Lobby membership, oldest first, each with their current dino.
  *
- * Since the Chunk 5.2 split `avatars` holds exactly one row per player (the
- * wearer record; `player_id` is UNIQUE), so "current dino" is a plain lookup
- * rather than the "latest per player" fold this used to do. The avatars are
- * still fetched in a second query and joined in memory: a lobby is party-sized
- * (tens of people), so the round trip is cheaper than the join complexity.
+ * `avatars` holds exactly one row per player, so "current dino" is a plain
+ * lookup rather than a "latest per player" fold. Avatars are still fetched in a
+ * second query and joined in memory: a lobby is party-sized, so the extra round
+ * trip is cheaper than the join complexity.
  */
 export async function loadLobbyMembers(lobbyId: string): Promise<PersistedMember[]> {
   const memberRows = await db()

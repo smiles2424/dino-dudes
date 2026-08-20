@@ -1,17 +1,12 @@
 /**
- * Chunk 3.1 integration test — runs against the **real** Neon + Upstash.
+ * The data layer against the real Neon + Upstash. Nothing is mocked on purpose:
+ * the whole point is that a 1024² PNG survives a round-trip through `bytea` and
+ * through Upstash's JSON/REST transport byte for byte, and a fake would prove
+ * nothing.
  *
- * There is no mocking here on purpose: the whole point of the data layer is
- * that a 1024² PNG survives a round-trip through `bytea` and through Upstash's
- * JSON/REST transport byte-for-byte. A fake would prove nothing.
- *
- * Safety rules this file follows:
- *  - every row/key it creates is tagged with a unique per-run id, so concurrent
- *    runs (two agents, CI + local) can never collide;
- *  - `after()` deletes everything it created, by primary key, even if a test
- *    threw halfway through;
- *  - with no credentials in the environment every test **skips** rather than
- *    fails, so CI on a forked PR (no secrets) stays green.
+ * Every row and key is tagged with a per-run id so concurrent runs cannot
+ * collide, `after()` deletes them by primary key even if a test threw, and with
+ * no credentials every test skips rather than fails.
  */
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
@@ -107,7 +102,7 @@ describe('Chunk 3.1 data layer (real Neon + Upstash)', () => {
     assert.equal(player.name, `${RUN_ID}-ada`);
     assert.ok(player.createdAt instanceof Date);
 
-    // The blob lives in its own content-addressed table (Wave 5, Chunk 5.2).
+    // The blob lives in its own content-addressed table.
     await db().insert(textures).values({ hash: TEXTURE_HASH, bytes: TEXTURE });
     created.textures.push(TEXTURE_HASH);
 

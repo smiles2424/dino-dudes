@@ -1,16 +1,14 @@
 /**
  * Idle/wander motion.
  *
- * Every number below is derived from a **seed plus the player's id** — no
- * `Math.random()` anywhere — so the world is identical on every machine and on
- * every reload, and freezing time at t = 0 (the `?static=1` screenshot mode)
- * puts every dino exactly on the position/heading its state says it has.
+ * Every number here is derived from a seed plus the player's id — no
+ * `Math.random()` anywhere — so the world is identical on every machine and
+ * every reload, and freezing time at t = 0 (`?static=1`) puts every dino
+ * exactly on the position its state says it has.
  *
- * Wave 5 Chunk 5.1 added the seed and made the *time* shared too: in a live
- * lobby the seed comes from room state (`motionSeed`) and `time` is measured
- * from the server's `motionEpoch` on the server's clock, so two browsers watch
- * the same dinosaur take the same step at the same moment. `/debug/world` has
- * no server, passes no seed, and keeps its old page-local behaviour.
+ * In a live lobby the seed and the clock both come from the room, so two
+ * browsers watch the same dinosaur take the same step at the same moment. The
+ * `/debug/world` harness passes no seed and stays page-local.
  */
 import type { PlayerState } from '@dino/shared';
 
@@ -23,9 +21,8 @@ export interface Pose {
 }
 
 /**
- * Where the wander's numbers come from. Supplied by a live lobby
- * (`useLobbyRoom`); absent in the `/debug/world` harness, which falls back to
- * the renderer's own clock and an empty seed.
+ * Where the wander's numbers come from. Supplied by a live lobby; absent in the
+ * harness, which falls back to the renderer's own clock and an empty seed.
  */
 export interface MotionSource {
   /** The lobby's server-issued motion seed. */
@@ -70,12 +67,10 @@ interface Wander {
 const wanderCache = new Map<string, Wander>();
 
 /**
- * Wander parameters for one player in one lobby.
- *
- * The lobby's `seed` is mixed in so the same child rejoining a different lobby
- * does not retrace yesterday's path — and, far more importantly, so that every
- * client of *this* lobby derives the same path from state it was given rather
- * than from anything local.
+ * Wander parameters for one player in one lobby. The lobby's `seed` is mixed in
+ * so the same child rejoining a different lobby does not retrace yesterday's
+ * path, and — the point — so every client derives the path from state it was
+ * given rather than from anything local.
  */
 function wanderFor(id: string, seed: string): Wander {
   const key = seed === '' ? id : `${seed}:${id}`;
@@ -85,9 +80,9 @@ function wanderFor(id: string, seed: string): Wander {
   const a = seedFromId(key);
   const b = seedFromId(`${key}#2`);
   const wander: Wander = {
-    // Amplitudes are deliberately modest: the camera has to frame every dino's
-    // whole reachable box (see `camera-fit.ts`), and a 4.6 m excursion pushed
-    // the projector so far back that the animals became specks.
+    // Amplitudes are deliberately modest: the camera must frame every dino's
+    // whole reachable box, and a 4.6 m excursion pushed the projector so far
+    // back that the animals became specks.
     radiusX: 0.55 + a * 0.75,
     radiusZ: 0.35 + b * 0.5,
     speed: 0.16 + b * 0.14,
@@ -100,9 +95,8 @@ function wanderFor(id: string, seed: string): Wander {
 }
 
 /**
- * Where a dino is at `time` seconds. The orbit is offset so that t = 0 is
- * exactly the player's stored position — freeze the clock and the scene equals
- * its JSON.
+ * Where a dino is at `time` seconds. The orbit is offset so t = 0 is exactly
+ * the player's stored position — freeze the clock and the scene equals its JSON.
  */
 export function poseAt(player: PlayerState, time: number, seed = ''): Pose {
   const home = player.position;
@@ -128,10 +122,9 @@ export function poseAt(player: PlayerState, time: number, seed = ''): Pose {
 }
 
 /**
- * Everywhere this dino can ever stand, for every t.
- *
- * `poseAt` offsets the orbit by its own phase, so the reachable interval in x
- * is `home.x + [-(1 + cos φ)·rx, (1 - cos φ)·rx]` (and the same in z with sin).
+ * Everywhere this dino can ever stand, for every t. `poseAt` offsets the orbit
+ * by its own phase, so the reachable interval in x is
+ * `home.x + [-(1 + cos φ)·rx, (1 - cos φ)·rx]`, and likewise in z with sin.
  * The camera frames *this*, not the current pose, so nobody walks off screen a
  * minute after they arrive.
  */

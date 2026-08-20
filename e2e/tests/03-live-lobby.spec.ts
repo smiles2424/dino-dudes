@@ -1,30 +1,12 @@
 /**
- * E2E #3 — Wave 4, Chunk 4.1 (the lobby-connected game view).
+ * The lobby-connected game view: one browser, everything else real. A drawing
+ * uploaded over plain HTTP with no browser involved must reach the spectating
+ * page within {@link FANOUT_BUDGET_MS} — one assertion covering paper → phone →
+ * API → Postgres → Redis → Colyseus → someone else's screen.
  *
- * One browser, everything else real:
- *
- *   POST /api/lobbies over HTTP            (real Fastify → real Neon)
- *     → open `/play?lobby=CODE`            (real web build, spectator join)
- *     → the browser opens a real WebSocket to the real Colyseus room
- *     → POST /api/avatars with a 1024² PNG (request context — no browser)
- *     → the room fans the upload out over the socket, the page prefetches the
- *       PNG from `GET /api/textures/:hash` and hot-swaps it onto the model
- *     → assert the dino AND its texture hash are in `window.__world` ≤ 5 s
- *       after the upload was accepted
- *
- * That last assertion is the whole product in one line: paper → phone → API →
- * Postgres → Redis → Colyseus → someone else's screen. Chunk 4.3's flagship
- * replaces the request-context upload with a second, mobile-emulated browser
- * pushing a photo through the real pipeline.
- *
- * **Secrets**: creating a lobby needs Neon, so with no `.env` this file skips
- * rather than fails — the same rule the server integration tests follow. It
- * asks the running server (`/healthz` reports `checks.postgres === null` when
- * Postgres is not configured) instead of looking for a file, so it is right
- * about the server the browser is actually talking to.
- *
- * Nothing here modifies E2E #1 or #2. `window.__world`'s type comes from the
- * `declare global` in `02-world.spec.ts` — one program, one contract.
+ * Skips without Neon, asked of the running server via `/healthz` rather than by
+ * looking for a file, so it is right about the server the browser is actually
+ * talking to.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { expect, test, type APIRequestContext } from '@playwright/test';
@@ -37,25 +19,22 @@ import { SERVER_BASE_URL } from '../playwright.config.js';
 import { makePng } from '../support/fixture-png.js';
 
 /**
- * Tags every row this run creates, so leftovers in Neon are identifiable.
- * The full uuid seeds the texture, so its content address is unique per run
- * (`avatars.texture_hash` is UNIQUE).
+ * Tags every row this run creates so leftovers in Neon are identifiable. The
+ * full uuid seeds the texture, so its content address is unique per run.
  */
 const RUN_UUID = randomUUID();
 const RUN_ID = RUN_UUID.slice(0, 8);
 const PLAYER_NAME = `e2e-${RUN_ID}`;
 
 /**
- * The Wave 4 budget: once the upload has been accepted, the drawing is on the
- * projector within five seconds.
+ * Once the upload has been accepted, the drawing is on the projector within
+ * five seconds.
  *
- * The clock starts when `POST /api/avatars` *responds* (Chunk 4.3). It used to
- * start when the request was sent, which folded the upload itself — a 1 MB
- * multipart body, a Neon insert and an Upstash publish, 1.5 s on a good day and
- * 8 s on a bad one from a home connection — into a budget that exists to
- * measure fan-out. The inner `waitForFunction` always had this semantic; now
- * the reported number matches it. Upload latency is still printed, so a
- * regression there is visible rather than silently eating the fan-out budget.
+ * The clock starts when `POST /api/avatars` *responds*. Starting it at send
+ * would fold the upload itself — a 1 MB body, a Neon insert and an Upstash
+ * publish, 1.5–8 s from a home connection — into a budget that exists to
+ * measure fan-out. Upload latency is printed separately so a regression there
+ * cannot silently eat this budget.
  */
 const FANOUT_BUDGET_MS = 5000;
 
@@ -86,13 +65,10 @@ test('the game view prompts for a code when the URL has no lobby', async ({ page
 test('a drawing uploaded over HTTP appears on the spectator screen', async ({ page, request }) => {
   test.skip(!(await postgresConfigured(request)), 'no DATABASE_URL — skipping the live lobby E2E');
   /*
-   * Same headroom `02-world` and `04-capture-flow` take, for the same reason:
-   * this spec builds the SwiftShader scene *and* waits on a real Neon upload,
-   * which the note above measures at 1.5–8 s. That is ~12 s of the 30 s
-   * default on a quiet box, and a busy one has been observed stretching a
-   * scene build by ~2.6×. The per-step budgets are untouched — FANOUT_BUDGET_MS
-   * still holds the room to 5 s, and it is the assertion that means something.
-   * Only the total gets room, so a loaded machine cannot fail a healthy run.
+   * This spec builds the SwiftShader scene *and* waits on a real upload, so it
+   * needs the same headroom 02 and 04 take. The per-step budgets are untouched
+   * — FANOUT_BUDGET_MS still holds the room to 5 s and is the assertion that
+   * means something; only the total gets room.
    */
   test.setTimeout(120_000);
 
@@ -102,14 +78,12 @@ test('a drawing uploaded over HTTP appears on the spectator screen', async ({ pa
     if (message.type() === 'error') failures.push(message.text());
   });
 
-  // ── 1. A real lobby, created the way the host's device creates one ───────
   const created = await request.post(`${SERVER_BASE_URL}/api/lobbies`, {
     data: { name: `e2e ${RUN_ID}` },
   });
   expect(created.status(), await created.text()).toBe(201);
   const { lobby, joinUrl } = CreateLobbyResponseSchema.parse(await created.json());
 
-  // ── 2. The projector opens the game view and spectates ───────────────────
   await page.goto(`/play?lobby=${lobby.code}`);
 
   await expect(page.getByTestId('lobby-code')).toHaveText(lobby.code);
@@ -118,14 +92,12 @@ test('a drawing uploaded over HTTP appears on the spectator screen', async ({ pa
   // Spectating adds no dino of its own.
   await expect(status).toHaveAttribute('data-dino-count', '0');
 
-  // The QR code encodes the same join URL the API hands out.
   const qr = page.getByTestId('lobby-qr');
   await expect(qr).toBeVisible();
   const encoded = await qr.getAttribute('data-qr-value');
   expect(encoded).toContain(`lobby=${lobby.code}`);
   expect(new URL(joinUrl).searchParams.get('lobby')).toBe(lobby.code);
 
-  // ── 3. A phone uploads a drawing over plain HTTP, with no browser ────────
   const png = makePng(1024, RUN_UUID);
   const expectedHash = createHash('sha256').update(png).digest('hex');
 
@@ -147,7 +119,6 @@ test('a drawing uploaded over HTTP appears on the spectator screen', async ({ pa
   expect(avatar.avatar.textureHash).toBe(expectedHash);
   const playerId = avatar.player.id;
 
-  // ── 4. …and it is on the screen within the budget ────────────────────────
   await page.waitForFunction(
     (args) =>
       window.__world?.dinoCount === 1 && window.__world?.appliedTextures[args.id] === args.hash,
@@ -165,13 +136,11 @@ test('a drawing uploaded over HTTP appears on the spectator screen', async ({ pa
   expect(world.frames).toBeGreaterThan(0);
   // Live mode is not screenshot mode; the world is animating.
   expect(world.frozen).toBe(false);
-  // The harness and the live view report the same contract version.
   expect(world.version).toBe(3);
-  // A live lobby times its wander from the server's clock (Wave 5, Chunk 5.1).
+  // A live lobby times its wander from the server's clock.
   expect(world.motion?.source).toBe('server');
   expect(world.motion?.seed).toMatch(/^[0-9a-f]{16}$/);
   expect(world.motion?.epoch).toBeGreaterThan(0);
-  // …and the one dino in it is inside the frame.
   expect(world.offscreen).toBe(0);
 
   // The nameplate comes from synchronized state, not from anything local.

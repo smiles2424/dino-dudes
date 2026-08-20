@@ -1,25 +1,18 @@
 /**
- * A token bucket, in process, for `POST /api/avatars` (Wave 5, Chunk 5.2).
+ * An in-process token bucket for `POST /api/avatars`.
  *
- * The threat model here is not an attacker — it is one phone in a school hall
- * with a stuck retry loop (or a bored ten-year-old holding "send") filling Neon
- * with megabyte PNGs. So this is deliberately the cheapest thing that works:
- * a `Map` of buckets in this process, no Redis round-trip on the hot path, no
- * dependency. v1 runs a single server; if 5.3 ever runs two, each gets its own
- * bucket and the effective limit doubles, which is fine for this purpose.
+ * The threat model is not an attacker — it is one phone in a school hall with a
+ * stuck retry loop filling Neon with megabyte PNGs — so this is deliberately
+ * the cheapest thing that works: a `Map` in this process, no Redis on the hot
+ * path. v1 runs one server; a second instance would get its own buckets and
+ * double the effective limit, which is acceptable for this purpose.
  *
- * Two buckets are consumed per upload (see `routes/avatars.ts`):
- *   • by client IP, *before* the multipart body is read — so a flood costs the
- *     server a header parse rather than 2 MB of buffering;
- *   • by IP + lobby + player name, after the fields parse — the person.
- *
- * The per-IP allowance is deliberately **ten times** the per-person one: at the
- * venue an entire class shares one Wi-Fi NAT, so a strict per-IP limit would
- * refuse a room full of children legitimately uploading at once. The per-person
- * bucket is what actually stops one phone hammering the server.
- *
- * Refill is continuous (fractional tokens), not a fixed window, so a child who
- * uploads, thinks, and uploads again is never told to wait.
+ * The per-IP allowance is ten times the per-person one because an entire class
+ * shares one Wi-Fi NAT at the venue, so a strict per-IP limit would refuse a
+ * room full of children uploading legitimately. The per-person bucket is what
+ * actually stops one phone hammering the server. Refill is continuous rather
+ * than a fixed window, so a child who uploads, thinks, then uploads again is
+ * never told to wait.
  */
 import { env } from './env.js';
 
@@ -88,9 +81,8 @@ export function createRateLimiter(options: RateLimiterOptions): RateLimiter {
       bucket.tokens = Math.min(capacity, bucket.tokens + (at - bucket.updatedAt) * perMs);
       bucket.updatedAt = at;
 
-      // Cheap housekeeping: a party is tens of keys, so an occasional full scan
-      // costs nothing and keeps a long-running server from growing a map of
-      // every IP that ever uploaded.
+      // A party is tens of keys, so an occasional full scan costs nothing and
+      // keeps a long-running server from growing a map of every IP it ever saw.
       if (buckets.size > 256) sweep(at);
 
       if (bucket.tokens < 1) {
@@ -112,10 +104,9 @@ export function createRateLimiter(options: RateLimiterOptions): RateLimiter {
 /**
  * Per **person** (IP + lobby + name) — the limiter that matters.
  *
- * `AVATAR_UPLOAD_LIMIT_PER_MIN` (see `env.ts`) defaults to 0 — off — under
- * `NODE_ENV=test`, because E2E specs upload as fast as they can and a flaky
- * 429 would make the suite lie. Everywhere else it defaults to 12/min with a
- * burst of 6, which is far more than a child retaking a photo will ever need.
+ * Defaults to off under `NODE_ENV=test`, because E2E specs upload as fast as
+ * they can and a flaky 429 would make the suite lie. Elsewhere 12/min with a
+ * burst of 6, far more than a child retaking a photo will ever need.
  */
 export const uploadLimiter: RateLimiter = createRateLimiter({
   perMinute: env.AVATAR_UPLOAD_LIMIT_PER_MIN,

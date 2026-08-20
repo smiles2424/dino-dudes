@@ -1,16 +1,10 @@
-# Netlify — the web client (Wave 5, Chunk 5.3).
+# Netlify — the web client, a plain Vite static build with no server, functions
+# or runtime config.
 #
-# The client is a plain Vite static build: no server, no functions, no runtime
-# config. Everything it knows about the backend is baked in at BUILD time by
-# `VITE_API_URL` (and optionally `VITE_WS_URL`), which is the one thing that
-# surprises people — changing the server URL means a REBUILD, not a restart.
-# Set them in Netlify → Site configuration → Environment variables, then
-# "Clear cache and deploy site".
-#
-# Netlify over Vercel for the same reason Render won on the server side: the
-# whole deploy is a repo connect plus two environment variables in a form, and
-# `netlify.toml` covers the monorepo, the SPA rewrite and the caching in one
-# file. The Vercel equivalent is in docs/DEPLOY.md.
+# Everything it knows about the backend is baked in at BUILD time by
+# `VITE_API_URL` (and optionally `VITE_WS_URL`), which is the thing that
+# surprises people: changing the server URL means a rebuild with the cache
+# cleared, not a restart. The Vercel equivalent is in docs/DEPLOY.md.
 
 [build]
   # The repo root — this is a pnpm workspace and @dino/web depends on
@@ -27,26 +21,20 @@
   NETLIFY_USE_PNPM = "true"
 
 # ── SPA routing ───────────────────────────────────────────────────────────────
-# There is no router library: `main.tsx` reads `window.location.pathname`. The
-# host therefore has to hand the same index.html to every path, or the QR-code
-# deep links break — and they are the entire product:
-#
-#   /?lobby=ABC23                       what the projector's QR code encodes
-#   /play?lobby=ABC23&name=…&playerId=… where the capture flow lands
-#   /debug/world                        the harness (ships on purpose)
-#
-# 200 (rewrite) not 301: the URL the phone shows must keep its query string.
-# Netlify serves real files first, so /assets/*, /debug/world.json and
-# /debug/textures/* are unaffected by this rule.
+# There is no router library — `main.tsx` reads `window.location.pathname` — so
+# the host must hand the same index.html to every path or the QR-code deep links
+# break, and those are the entire product. 200 (rewrite) not 301, because the URL
+# the phone shows has to keep its query string. Netlify serves real files first,
+# so /assets/* and /debug/* are unaffected.
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
 
 # ── Caching ───────────────────────────────────────────────────────────────────
-# Thirty phones open this site inside two minutes. Vite content-hashes every
-# file under /assets, so they are safe to pin forever — that includes the
-# ~843 kB `three` chunk, which the second class then never downloads again.
+# Thirty phones open this site inside two minutes, and Vite content-hashes
+# everything under /assets — including the ~843 kB `three` chunk, which the
+# second class then never downloads again.
 [[headers]]
   for = "/assets/*"
   [headers.values]

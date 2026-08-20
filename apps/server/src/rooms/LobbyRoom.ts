@@ -1,27 +1,12 @@
 /**
- * `LobbyRoom` — the live shared world for one lobby (Wave 3, Chunk 3.3).
+ * The live shared world for one lobby.
  *
- * ── Identity model ─────────────────────────────────────────────────────────
- * `state.players` is keyed two ways on purpose:
- *
- *   • by Colyseus **sessionId** — a client connected over WebSocket right now;
- *   • by **playerId** (a uuid) — someone who is *in* the lobby but has no live
- *     socket: they uploaded a drawing over plain HTTP from their phone, or they
- *     uploaded and then closed the tab. Their dino must stay on the projector.
- *
- * The two key spaces cannot collide (Colyseus sessionIds are 9 characters, a
- * playerId is a 36-character uuid), and {@link keyIsPlayerId} tells them apart.
- *
- * ── Message flow ───────────────────────────────────────────────────────────
- *   client → joinOrCreate('lobby', { code, name?, modelSlug?, playerId? })
- *   client → 'select-model' { modelSlug }        → patches their PlayerState
- *   client → 'move' { position, heading }        → patches their PlayerState
- *   HTTP   → POST /api/avatars → emitAvatarUpdated() → {@link applyAvatarUpdate}
- *            → patches textureHash/modelSlug in state AND broadcasts
- *              'avatar-updated' to every client in that lobby.
- *
- * The room is the *only* place that knows a lobby code maps to a room; the API
- * route layer stays oblivious and just calls the `avatar-events` hook.
+ * `state.players` is keyed two ways: by Colyseus **sessionId** for a client
+ * connected right now, and by **playerId** (uuid) for someone in the lobby with
+ * no live socket — they uploaded over plain HTTP, or drew and then closed the
+ * tab, and their dino must stay on the projector either way. The key spaces
+ * cannot collide (sessionIds are 9 characters, playerIds 36) and
+ * {@link keyIsPlayerId} tells them apart.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { MapSchema, Schema, defineTypes } from '@colyseus/schema';
@@ -45,7 +30,7 @@ import { redis } from '../redis.js';
 
 // ── Synchronized state ─────────────────────────────────────────────────────
 // Mirrors `LobbyStateSchema` in `@dino/shared`; keep them structurally equal.
-// `defineTypes` rather than decorators, so no decorator compiler flags.
+// `defineTypes` rather than decorators avoids needing decorator compiler flags.
 
 export class Vec3 extends Schema {
   x = 0;
@@ -76,7 +61,7 @@ export class LobbyState extends Schema {
   code = '';
   createdAt = 0;
   players = new MapSchema<PlayerState>();
-  /** Wave 5 Chunk 5.1 — see {@link LobbyRoom.startMotionClock}. */
+  /** See {@link LobbyRoom.startMotionClock}. */
   motionSeed = '';
   motionEpoch = 0;
   serverTime = 0;
@@ -96,19 +81,12 @@ defineTypes(LobbyState, {
 // ── Spawn placement ────────────────────────────────────────────────────────
 
 /**
- * Where a dino stands today.
+ * A dino's *home* — not where it is standing. Clients wander around this point
+ * as a pure function of `motionSeed`, the player id and the shared clock, so no
+ * position ever crosses the wire (see {@link LobbyRoom.startMotionClock}).
  *
- * Position/heading are **server-assigned once, at join, and then only changed
- * by a client's `move` message** (nothing sends one). The spawn point is
- * derived deterministically from the player's identity rather than from join
- * order, so it is identical in every client's copy of the state and stable
- * across a reconnect.
- *
- * This is *home*, not where the dino is standing: since Wave 5 Chunk 5.1 the
- * clients wander around it as a pure function of `motionSeed`, the player id
- * and the shared clock (see {@link LobbyRoom.startMotionClock}), so every
- * browser draws the same animal in the same place at the same moment without
- * a single position ever crossing the wire.
+ * Derived from identity rather than join order, so every client's copy agrees
+ * and the spot survives a reconnect.
  */
 export function spawnFor(identity: string): { position: { x: number; y: number; z: number }; heading: number } {
   const digest = createHash('sha256').update(identity).digest();
@@ -129,10 +107,10 @@ export const keyIsPlayerId = (key: string): boolean =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key);
 
 // ── Live room registry (in-process fan-out) ────────────────────────────────
-// v1 runs a single process, so routing an avatar update to "the room for lobby
-// ABCDE" is a Map lookup, not a Redis round-trip (docs/ARCHITECTURE.md §2).
-// A Set, not a single room, because a code could briefly have two rooms during
-// a matchmaking race; every one of them gets the update.
+// v1 is a single process, so "the room for lobby ABCDE" is a Map lookup rather
+// than a Redis round-trip (docs/ARCHITECTURE.md §2). A Set, not one room: a
+// matchmaking race can briefly give a code two rooms, and all of them must be
+// told.
 
 const roomsByCode = new Map<string, Set<LobbyRoom>>();
 
@@ -140,18 +118,16 @@ const roomsByCode = new Map<string, Set<LobbyRoom>>();
 export const roomsForCode = (code: string): LobbyRoom[] => [...(roomsByCode.get(code) ?? [])];
 
 /**
- * The fan-out registered with `setAvatarBroadcaster()` at boot.
- *
- * Returns the number of rooms patched (0 == nobody is watching that lobby,
- * which is normal and not an error). Never throws: `emitAvatarUpdated` runs
- * *after* the upload is committed, so a room bug must not fail the upload.
+ * The fan-out registered with `setAvatarBroadcaster()` at boot. Returns how many
+ * rooms were patched; 0 means nobody is watching that lobby, which is normal.
+ * Never throws — it runs *after* the upload is committed, so a bug in here must
+ * not fail the upload.
  */
 export async function applyAvatarUpdate(update: AvatarUpdatedMessage): Promise<number> {
   const rooms = roomsForCode(update.lobbyCode);
   if (rooms.length === 0) return 0;
 
-  // Only needed when we have to create or adopt an entry, and only reachable
-  // when a DB is configured (an avatar update implies a Postgres write).
+  // An avatar update implies a Postgres write, so a DB is configured here.
   const playerName = await lookupPlayerName(update.playerId);
 
   for (const room of rooms) room.receiveAvatarUpdate(update, playerName);
@@ -225,10 +201,9 @@ export class LobbyRoom extends Room<LobbyState> {
       player.modelSlug = msg.data.modelSlug;
     });
 
-    // Client-authoritative for v1 (see `spawnFor`): the server stores whatever
-    // a client reports so the *other* clients can see it, but nothing sends
-    // these — idle motion is a shared function of state, not a stream of
-    // positions (Chunk 5.1). It exists for the day a dino is *driven*.
+    // Client-authoritative, and nothing currently sends it: idle motion is a
+    // shared function of state, not a stream of positions. It exists for the
+    // day a dino is actually *driven*.
     this.onMessage(ROOM_MESSAGES.move, (client, message: unknown) => {
       const msg = MoveMessageSchema.safeParse(message);
       const player = this.state.players.get(client.sessionId);
@@ -239,7 +214,7 @@ export class LobbyRoom extends Room<LobbyState> {
       player.heading = msg.data.heading;
     });
 
-    // Everyone who already drew, before this room existed (Chunk 4.2).
+    // Everyone who already drew, before this room existed.
     await this.#hydrateFromDatabase();
 
     const existing = roomsByCode.get(code);
@@ -248,24 +223,15 @@ export class LobbyRoom extends Room<LobbyState> {
   }
 
   /**
-   * The shared motion clock (Wave 5, Chunk 5.1) — how two browsers show the
-   * same dinosaur in the same place while it is *moving*.
+   * The shared motion clock: how two browsers show the same dinosaur in the
+   * same place while it is moving, with no position ever crossing the wire.
    *
-   * The wander itself stays on the clients (60 fps of ambling does not belong
-   * on the wire), but everything it is derived from now comes from here:
-   *
-   *   • `motionSeed` — one random seed per room. A client's wander parameters
-   *     are hashed from `seed:playerId`, so every client agrees on them and no
-   *     two lobbies look alike.
-   *   • `motionEpoch` — the instant motion time counts from.
-   *   • `serverTime` — this process's wall clock, rewritten every
-   *     {@link SERVER_TIME_TICK_MS}. A client subtracts its own `Date.now()`
-   *     on arrival to estimate the offset between the two clocks, so it can
-   *     evaluate the wander at *server* time rather than at page-load time.
-   *
-   * `this.clock` ticks immediately before every patch is serialized, so the
-   * value a client receives is at most one network hop stale — tens of
-   * milliseconds, which is nothing to a dinosaur ambling at 0.2 rad/s.
+   * The wander runs on the clients; only its inputs are published here.
+   * `motionSeed` (one per room) is hashed with a playerId into that dino's
+   * wander parameters, `motionEpoch` is the instant motion counts from, and
+   * `serverTime` lets a client subtract its own `Date.now()` to estimate the
+   * clock offset — so it evaluates the wander at *server* time rather than at
+   * page-load time.
    */
   private startMotionClock(): void {
     const now = Date.now();
@@ -281,18 +247,15 @@ export class LobbyRoom extends Room<LobbyState> {
   }
 
   /**
-   * Seed the world from Postgres with the lobby members who already have a
-   * drawing, as offline entries keyed by `playerId`.
+   * Seed the world from Postgres with lobby members who already drew, as
+   * offline entries keyed by `playerId`.
    *
-   * A room is disposed the moment it empties, so "the room for lobby ABCDE"
-   * is not a durable thing — the first person to draw uploads over plain HTTP
-   * with no room alive to fan out to, and then opens the game view, creating
-   * a brand-new one. Without this, they would walk into an empty field and
-   * their own dinosaur would be missing. `onJoin` re-keys these entries onto
-   * a sessionId when their owner connects, so nobody is ever cloned.
-   *
-   * Members with no drawing are deliberately skipped: a nameplate on a blank
-   * dino for someone who is not even connected is clutter on the projector.
+   * A room is disposed the moment it empties, so the first person to draw
+   * uploads with no room alive to fan out to, and would otherwise later walk
+   * into an empty field missing their own dinosaur. `onJoin` re-keys these onto
+   * a sessionId when their owner connects, so nobody is cloned. Members with no
+   * drawing are skipped: a blank dino for someone who is not even connected is
+   * clutter on the projector.
    */
   async #hydrateFromDatabase(): Promise<void> {
     if (!this.#lobbyId) return;
@@ -334,8 +297,8 @@ export class LobbyRoom extends Room<LobbyState> {
       throw new ServerError(ROOM_ERROR_CODES.lobbyNotFound, `this room serves ${this.state.code}`);
     }
 
-    // ── Spectator: the projector view, or a phone that hasn't drawn yet. ────
-    // It sees the whole synchronized world and contributes no dino.
+    // Spectator (the projector, or a phone that hasn't drawn): sees the whole
+    // world, contributes no dino.
     if (opts.spectator === true || !opts.name) {
       this.#spectators.add(client.sessionId);
       return;
@@ -375,9 +338,8 @@ export class LobbyRoom extends Room<LobbyState> {
     if (!player) return;
     this.state.players.delete(client.sessionId);
 
-    // Someone who already uploaded a drawing keeps their dino in the world
-    // after they close the phone — that is the whole point of the projector.
-    // They are re-keyed by playerId, exactly like an HTTP-only uploader.
+    // Someone who already drew keeps their dino after they close the phone —
+    // that is the whole point of the projector — re-keyed by playerId.
     if (player.textureHash !== '' && keyIsPlayerId(player.id)) {
       this.state.players.set(player.id, player);
       return;
@@ -395,11 +357,10 @@ export class LobbyRoom extends Room<LobbyState> {
       if (set.size === 0) roomsByCode.delete(this.#code);
     }
 
-    // Wave 5, Chunk 5.2 — the one moment we know nobody is in this lobby is a
-    // free chance to close it *if* it has also been quiet for hours. One
-    // UPDATE, no scheduler, and it cannot close a lobby that is still in use
-    // (see `lobby-lifecycle.ts`). Fire-and-forget: a disposal must not wait on
-    // Neon, and `closeIdleLobbies` never throws.
+    // The one moment we know nobody is in this lobby is a free chance to close
+    // it *if* it has also been quiet for hours: one UPDATE, no scheduler, and
+    // it cannot close a lobby still in use (see `lobby-lifecycle.ts`).
+    // Fire-and-forget — a disposal must not wait on Neon.
     if (this.#lobbyId) void closeIdleLobbies(this.#lobbyId);
   }
 
@@ -407,16 +368,14 @@ export class LobbyRoom extends Room<LobbyState> {
 
   /**
    * Applies one `avatar:updated` to synchronized state and tells every client.
-   *
-   * The uploader may not have a WebSocket at all (a phone that only ever spoke
-   * HTTP), in which case an entry is created keyed by their playerId.
+   * The uploader may have no WebSocket at all (a phone that only spoke HTTP),
+   * in which case an entry is created keyed by their playerId.
    */
   receiveAvatarUpdate(update: AvatarUpdatedMessage, playerName: string | null): void {
     let entry = this.#findByPlayerId(update.playerId);
 
-    // Fallback: the client joined before it had a persisted playerId (the room
-    // minted a provisional one), so match on the name — which the REST layer
-    // treats as the person's identity within a lobby — and adopt the real id.
+    // Fallback: the client joined before it had a persisted playerId, so match
+    // on name — the person's identity within a lobby — and adopt the real id.
     if (!entry && playerName) entry = this.#findByName(playerName);
 
     if (!entry) {
@@ -479,10 +438,10 @@ export class LobbyRoom extends Room<LobbyState> {
   }
 
   /**
-   * The persisted player id for this name in this lobby, if the REST layer
-   * already created one (`POST /api/avatars` reuses a row per name per lobby).
-   * `null` when there is no match — the caller mints a provisional uuid and the
-   * fan-out adopts the real one on the first upload.
+   * The persisted player id for this name in this lobby (`POST /api/avatars`
+   * reuses one row per name per lobby). `null` when there is no match — the
+   * caller mints a provisional uuid and the fan-out adopts the real one on the
+   * first upload.
    */
   async #resolvePlayerId(name: string): Promise<string | null> {
     if (!hasDatabase() || !this.#lobbyId) return null;

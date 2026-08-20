@@ -1,24 +1,16 @@
 /**
- * Closing a lobby that the party has finished with (Wave 5, Chunk 5.2).
+ * Closing a lobby the party has finished with.
  *
- * A lobby row outlives its Colyseus room on purpose — the room is disposed the
- * moment it empties, and the code must still work when the projector comes
- * back. So "the room went away" is *not* the same as "the party is over", and
- * nothing here is a timer or a scheduler service. Instead:
+ * A lobby row outlives its Colyseus room on purpose: the room is disposed the
+ * moment it empties and the code must still work when the projector comes back,
+ * so "the room went away" is not "the party is over". Instead **idle** means
+ * nobody is in the room right now — the caller only runs this on a disposal or
+ * a new lobby — *and* nothing has happened here for {@link idleMs}.
  *
- *   **idle** = nobody is in the room right now (the caller only runs this when
- *   a room disposes, or when a new lobby is created) **and** nothing has
- *   happened in this lobby for {@link idleMs} — no upload, and the lobby itself
- *   was not created that recently.
- *
- * That is one UPDATE statement, evaluated in Postgres, run on an event we
- * already have. It is race-safe (`closed_at IS NULL` in the WHERE clause), it
- * cannot close a live lobby, and a server that is asleep all night simply
- * closes yesterday's lobbies the next time somebody starts a party.
- *
- * Once `closed_at` is set, `GET /api/lobbies/:code` answers 409 `lobby_closed`,
- * `POST /api/avatars` refuses, and `LobbyRoom.onCreate` rejects the join with
- * room error code 4090.
+ * That is one UPDATE evaluated in Postgres on an event we already have: no
+ * timer, no scheduler. It is race-safe (`closed_at IS NULL` in the WHERE), it
+ * cannot close a live lobby, and a server asleep all night simply closes
+ * yesterday's lobbies when somebody next starts a party.
  */
 import { sql } from 'drizzle-orm';
 import { db, hasDatabase } from './db.js';
@@ -29,11 +21,10 @@ export const idleMs = (): number => env.LOBBY_IDLE_HOURS * 3_600_000;
 
 /**
  * Stamps `closed_at` on every idle, still-open lobby — or just on `lobbyId`
- * when one is given.
+ * when one is given — and returns how many were closed.
  *
- * Returns the number of lobbies closed. Never throws: this runs on the back of
- * a room disposal, where a database blip must not become an unhandled
- * rejection that takes the process down.
+ * Never throws: this runs on the back of a room disposal, where a database blip
+ * must not become an unhandled rejection that takes the process down.
  */
 export async function closeIdleLobbies(lobbyId?: string): Promise<number> {
   if (!hasDatabase()) return 0;
@@ -72,9 +63,8 @@ export async function closeIdleLobbies(lobbyId?: string): Promise<number> {
 }
 
 /**
- * The sweep over *all* lobbies is cheap but pointless to repeat; creating a
- * lobby is the natural moment to tidy up, and parties do not start twice a
- * second.
+ * Creating a lobby is the natural moment to tidy up: the full sweep is cheap
+ * but pointless to repeat, and parties do not start twice a second.
  */
 const SWEEP_EVERY_MS = 10 * 60_000;
 let lastSweep = 0;

@@ -1,11 +1,9 @@
 /**
- * The client half of the Colyseus contract (Wave 4, Chunk 4.1).
- *
- * Everything that knows about `colyseus.js` lives here or in
- * {@link ./useLobbyRoom.ts}; React components only ever see plain
- * {@link PlayerState} objects — the exact same shape `/debug/world` feeds the
- * renderer from a static JSON file. That is what makes the harness and the
- * live game view share 100 % of the rendering code.
+ * The client half of the Colyseus contract. Everything that knows about
+ * `colyseus.js` lives here or in {@link ./useLobbyRoom.ts}; components only see
+ * plain {@link PlayerState} objects — the same shape `/debug/world` feeds the
+ * renderer from static JSON, which is what lets the harness and the live game
+ * view share all of the rendering code.
  *
  * `colyseus.js` is pinned to the **0.16** line on purpose: 0.17 drags in
  * `@colyseus/core@0.17`, which cannot talk to the server's `colyseus@0.16.5`.
@@ -38,19 +36,18 @@ export const textureUrlFor = (hash: string): string => `${API_BASE}${textureUrlP
 /**
  * The live state, parsed with the frozen contract but with **`name` relaxed**.
  *
- * `PlayerStateSchema.name` is `min(1)` because a person always has a name, yet
- * the room legitimately creates a nameless entry for a heartbeat: when an
- * HTTP-only uploader is faned out before their Postgres row can be read back,
- * `receiveAvatarUpdate` sets `name = ''` and fills it in a moment later. That
- * is a real, renderable dino (blank nameplate), not drift — so it is relaxed
- * here rather than being allowed to blank the whole projector.
+ * `PlayerStateSchema.name` is `min(1)`, yet the room legitimately publishes a
+ * nameless entry for a heartbeat: an HTTP-only uploader is fanned out before
+ * their Postgres row can be read back, so `receiveAvatarUpdate` sets `name = ''`
+ * and fills it in a moment later. That is a real, renderable dino with a blank
+ * nameplate, not drift — relaxing it here beats blanking the whole projector.
  */
 const LivePlayerSchema = PlayerStateSchema.extend({ name: z.string() });
 const LiveStateSchema = LobbyStateSchema.extend({
   players: z.record(z.string(), LivePlayerSchema),
 });
 
-/** The room's shared motion clock, as carried in state (Wave 5, Chunk 5.1). */
+/** The room's shared motion clock, as carried in state. */
 export interface LiveMotion {
   seed: string;
   /** Server-clock ms the wander is timed from. `0` == no server clock. */
@@ -106,11 +103,10 @@ export async function joinLobby(options: LobbyJoinOptions): Promise<LobbyRoomHan
 }
 
 /**
- * A room error the human can act on.
- *
- * The server refuses a join with a structured `ServerError` (`ROOM_ERROR_CODES`),
- * which `colyseus.js` surfaces as `err.code`. Anything else — a dead server, a
- * dropped Wi-Fi — has no code, and the honest message is "we lost the server".
+ * A room error the human can act on. The server refuses a join with a
+ * structured `ServerError`, surfaced as `err.code`; anything else — a dead
+ * server, dropped Wi-Fi — has no code, and the honest message is that we lost
+ * the server.
  */
 export function describeRoomError(cause: unknown): { code: number | null; message: string } {
   const err = cause as { code?: unknown; message?: unknown };

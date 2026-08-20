@@ -1,27 +1,13 @@
 /**
- * `pnpm --filter @dino/server loadtest` — 50 phones in one lobby.
+ * `pnpm --filter @dino/server loadtest` — 50 phones in one lobby, answering one
+ * question before the event: does everybody see everything, how fast, and what
+ * does it cost the server?
  *
- * The venue is a school hall with one projector and a class of children, so the
- * question this answers is narrow and specific: **when fifty clients sit in a
- * single `LobbyRoom` and a few of them upload drawings, does everybody see
- * everything, how fast, and what does it cost the server?**
- *
- * It is NOT part of `pnpm test` — it needs Neon, it takes ~a minute, and it
- * starts a real server. Run it by hand before the event.
- *
- * Built on `@colyseus/loadtest` (0.16, matching the server's Colyseus): its
- * `Options` shape and its `cli()` driver. `--tui` gives you that tool's live
- * blessed dashboard; the default is a headless run that prints numbers you can
- * paste into a report, because a TUI cannot be recorded in PLAN.md.
- *
- * Usage:
- *   pnpm --filter @dino/server loadtest                  # 50 clients, 5 uploads
- *   pnpm --filter @dino/server loadtest -- --numClients 100 --uploads 10
- *   pnpm --filter @dino/server loadtest -- --endpoint ws://host:2567 --no-spawn
- *   pnpm --filter @dino/server loadtest -- --tui         # @colyseus/loadtest UI
- *
- * Requires `pnpm build` first (it launches `dist/index.js`), and a `.env` with
- * DATABASE_URL — a lobby has to exist in Postgres before a room will accept it.
+ * Not part of `pnpm test` — it needs Neon, takes about a minute and starts a
+ * real server, so run it by hand after `pnpm build`. A lobby must exist in
+ * Postgres before a room will accept it. `--tui` hands the client script to
+ * `@colyseus/loadtest`'s dashboard; the default prints numbers instead, because
+ * a TUI cannot be pasted into a report.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { execFile } from 'node:child_process';

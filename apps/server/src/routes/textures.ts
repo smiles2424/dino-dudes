@@ -46,8 +46,8 @@ export async function registerTextureRoutes(app: FastifyInstance): Promise<void>
     }
 
     if (!bytes && hasDatabase()) {
-      // Since Chunk 5.2 the blob lives in its own content-addressed table —
-      // this read no longer cares who (if anyone) is wearing the drawing.
+      // The blob lives in its own content-addressed table, so this read does
+      // not care who (if anyone) is wearing the drawing.
       const [row] = await db()
         .select({ bytes: textures.bytes })
         .from(textures)

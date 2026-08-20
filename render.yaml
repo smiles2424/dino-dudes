@@ -1,14 +1,13 @@
-# Render Blueprint — the server (Wave 5, Chunk 5.3).
+# Render Blueprint — the server.
 #
-# Render was chosen over Fly for one reason: the human deploying this has no
-# hosting credentials yet and will be doing it once, under time pressure, before
-# a school event. Render reads this file from the repo (New → Blueprint), builds
-# the Dockerfile itself, and asks for the secrets in a web form — no CLI, no
-# `flyctl auth`, no local Docker daemon. The Fly equivalent is in docs/DEPLOY.md
-# for anyone who prefers it.
+# Render over Fly because the human deploying this has no hosting credentials
+# yet and will do it once, under time pressure, before a school event: Render
+# reads this file from the repo, builds the Dockerfile itself, and asks for the
+# secrets in a web form — no CLI, no local Docker daemon. The Fly equivalent is
+# in docs/DEPLOY.md.
 #
-# Every `sync: false` below means "Render prompts for this and never stores it
-# in git". Values are pasted once, in the dashboard.
+# Every `sync: false` below means Render prompts for that value and never stores
+# it in git.
 services:
   - type: web
     name: dino-dudes-server
@@ -17,13 +16,10 @@ services:
     dockerContext: .
 
     # ── The single-instance rule (read docs/DEPLOY.md before changing) ───────
-    # The upload rate limiter and the texture memo are BOTH per-process. Two
-    # instances means double the effective upload allowance and a cold memo on
-    # whichever instance a phone lands on. Colyseus rooms are also in-process:
-    # without a Redis presence driver, two instances put two children in the
-    # "same" lobby into two different worlds. One instance. For an event of
-    # ~30 phones this is not a capacity question — the loadtest did 50 clients
-    # in one room on 82 MB of RSS.
+    # Colyseus rooms, the upload rate limiter and the texture memo are all
+    # per-process. Without a Redis presence driver, two instances put two
+    # children in the "same" lobby into two different worlds. This is not a
+    # capacity question: the loadtest ran 50 clients in one room on 82 MB.
     numInstances: 1
     # Free instances sleep after 15 minutes and cold-start in ~50 s. That is the
     # projector going blank between two classes. Starter is the event plan.

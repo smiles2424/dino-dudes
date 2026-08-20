@@ -1,27 +1,15 @@
 # syntax=docker/dockerfile:1
 #
-# @dino/server — the Fastify + Colyseus process (Wave 5, Chunk 5.3).
+# @dino/server — the Fastify + Colyseus process.
 #
 # Built from the REPO ROOT (`docker build -f Dockerfile .`) because this is a
 # pnpm workspace: the server imports `@dino/shared` by workspace link, and the
-# lockfile that makes `--frozen-lockfile` meaningful lives at the root.
+# lockfile `--frozen-lockfile` validates against lives there.
 #
-#   deps    every manifest + the lockfile → one cacheable install layer. Source
-#           changes do not re-resolve 500 packages.
-#   build   tsc for @dino/shared then @dino/server, then `pnpm deploy`, which
-#           writes a self-contained tree with **prod dependencies only** (231
-#           packages; no typescript, no tsx, no drizzle-kit, no playwright).
-#   runtime just that tree on a bare Node 22.
-#
-# The runtime image runs migrations and *then* serves — see the CMD. Boot is
-# fail-fast on purpose: a schema the code does not match should stop a deploy,
-# not surface as a 500 on a child's upload at the venue.
-#
-# NOTE: `pnpm deploy --legacy` is deliberate. pnpm 10's new deploy wants
-# `inject-workspace-packages=true`; `--legacy` is the pnpm 9 behaviour, which is
-# what works with this workspace's default isolated node_modules. The resulting
-# tree was verified outside Docker (migrate + serve + `/healthz` 200) — see
-# docs/DEPLOY.md.
+# `pnpm deploy --legacy` is deliberate: pnpm 10's new deploy wants
+# `inject-workspace-packages=true`, and `--legacy` is the pnpm 9 behaviour that
+# works with this workspace's isolated node_modules. The resulting tree was
+# verified outside Docker — migrate, serve, `/healthz` 200 — see docs/DEPLOY.md.
 
 # ── base ──────────────────────────────────────────────────────────────────────
 FROM node:22-alpine AS base
@@ -67,11 +55,11 @@ COPY --from=build --chown=node:node /prod/server ./
 USER node
 EXPOSE 2567
 
-# Node 22 has global fetch, so the probe needs no curl in the image. `/healthz`
-# answers 200 whenever the process is serving — it reports Postgres/Redis
-# reachability in the body rather than failing, which is what you want from a
-# LIVENESS check: a blip at Neon must not make the platform kill a room full of
-# connected Colyseus clients.
+# Node 22 has global fetch, so this needs no curl in the image. `/healthz`
+# answers 200 whenever the process is serving and reports Postgres/Redis
+# reachability in the body rather than failing — what you want from a LIVENESS
+# check, since a blip at Neon must not make the platform kill a room full of
+# connected clients.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=25s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||2567)+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 

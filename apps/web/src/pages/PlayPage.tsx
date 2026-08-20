@@ -1,23 +1,15 @@
 /**
- * `/play?lobby=CODE` — the game view. This is the projector screen.
+ * `/play?lobby=CODE` — the game view, i.e. the projector screen.
  *
- * It is the live twin of `/debug/world`: the harness feeds `<WorldView>` from a
- * static JSON file, this page feeds the very same component from synchronized
- * Colyseus state, and neither knows about the other. Everything the E2E suite
- * asserts (`window.__world`) is maintained inside `<WorldView>`/`<Dino>`, so it
- * is identical in both modes.
+ * The live twin of `/debug/world`: the harness feeds `<WorldView>` from static
+ * JSON, this page feeds the same component from synchronized Colyseus state,
+ * and neither knows about the other. Everything the E2E suite asserts lives
+ * inside `<WorldView>`/`<Dino>`, so it is identical in both modes.
  *
- * Query parameters
- *   ?lobby=CODE   the lobby to watch (required; a prompt appears without it)
- *   ?name=…       join as a *player* with a dino instead of spectating
- *   ?model=slug   which dinosaur (only meaningful with `name`)
- *   ?playerId=…   rejoin as an already-persisted player (set by Chunk 4.2
- *                 after `POST /api/avatars` returns `player.id`)
- *   ?spectator=1  force spectating even when a name is present
- *   ?static=1     freeze motion (screenshot mode), as on `/debug/world`
- *
- * With no `name`, the page joins as a **spectator**: it renders the whole world
- * and contributes no dino, which is exactly what a projector wants.
+ * `?name` joins as a player, `?model` picks the dinosaur, `?playerId` rejoins an
+ * already-persisted player, `?spectator=1` forces spectating and `?static=1`
+ * freezes motion. With no `name` the page spectates — it renders the whole
+ * world and contributes no dino, which is what a projector wants.
  */
 import { useCallback, useMemo, useState } from 'react';
 import {
@@ -44,7 +36,7 @@ interface PlayParams {
 
 /**
  * Screenshot mode renders at a fixed size, exactly as `/debug/world?static=1`
- * does, so a canvas assertion never depends on the window (Chunk 4.3).
+ * does, so a canvas assertion never depends on the window.
  */
 const STATIC_SIZE = { width: 800, height: 500 };
 

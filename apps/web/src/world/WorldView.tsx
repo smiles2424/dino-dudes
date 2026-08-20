@@ -1,20 +1,15 @@
 /**
- * The shared 3D world: ground, sky, light, and N dinos rendered straight from
- * a state object (the same shape Colyseus syncs).
+ * The shared 3D world: ground, sky, light and N dinos rendered straight from a
+ * state object — the same shape Colyseus syncs.
  *
- * Determinism rules, because this canvas is a screenshot assertion surface:
- *   • no `Math.random()` — every wobble comes from the lobby's motion seed and
- *     the player id, and its *time* comes from the server (Wave 5, Chunk 5.1),
- *     so two browsers watching one lobby render the same frame while the dinos
- *     are moving;
- *   • no text inside the canvas — nameplates are DOM (drei `<Html>`), so OS
- *     font rasterisation can never move a pixel of the render;
- *   • `frozen` (from `?static=1`) stops the clock at t = 0, disables the
- *     orbit controls, pins DPR to 1 and turns MSAA off.
+ * This canvas is a screenshot assertion surface, so nothing in it may vary: no
+ * `Math.random()` (every wobble comes from the lobby's motion seed and the
+ * player id, and its *time* from the server, so two browsers render the same
+ * frame while the dinos move), and no text inside the canvas (nameplates are
+ * DOM, so font rasterisation cannot move a pixel). `frozen` additionally stops
+ * the clock at t = 0, disables the controls, pins DPR to 1 and drops MSAA.
  *
- * The camera frames itself (Wave 5, Chunk 5.1): the classic projector shot is
- * dollied back until every dino's *reachable* area is inside the frustum, so
- * nobody's dinosaur is off screen — see `camera-fit.ts`.
+ * The camera frames itself — see `camera-fit.ts`.
  */
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
@@ -48,9 +43,9 @@ export interface WorldViewProps {
    */
   motion?: MotionSource;
   /**
-   * Camera override (added Chunk 4.2 for the capture flow's single-dino
-   * preview, which needs a close-up). Supplying either one also switches the
-   * fit-to-bounds framing off: the preview knows exactly what it wants to show.
+   * Camera override for the capture flow's single-dino preview, which needs a
+   * close-up. Supplying either one also switches fit-to-bounds off: the preview
+   * knows exactly what it wants to show.
    */
   cameraPosition?: readonly [number, number, number];
   cameraTarget?: readonly [number, number, number];
@@ -155,8 +150,8 @@ function WorldScene({
   const seed = motion?.seed ?? '';
   const aspect = size.height > 0 ? size.width / size.height : 1.6;
 
-  // Framed from where the dinos can *walk*, not from where they stand now, so
-  // the camera never has to move again while the lobby's membership is stable.
+  // Framed from where the dinos can *walk*, not where they stand now, so the
+  // camera never moves again while the lobby's membership is stable.
   const shot = useMemo(
     () => (override ? override : fitShotToPoints(BASE_SHOT, framePoints(players, seed), { aspect })),
     [override, players, seed, aspect],
@@ -234,9 +229,8 @@ function WorldScene({
     };
   }, [players, frozen, stateLoaded, seed]);
 
-  // Would this player be fully inside the frame at motion time `t`? Sampling
-  // it across a whole wander period is how E2E #2 proves the framing holds for
-  // every instant, not just for the one the test happened to catch.
+  // Sampled across a whole wander period, this is how E2E #2 proves the framing
+  // holds at every instant rather than the one the test happened to catch.
   useEffect(() => {
     const scratch = new Vector3();
     worldDebug.playerOnScreen = (playerId, t) => {

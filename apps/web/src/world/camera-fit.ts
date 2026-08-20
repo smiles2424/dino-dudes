@@ -1,25 +1,18 @@
 /**
- * Framing: **every dino on screen** (Wave 5, Chunk 5.1).
+ * Framing: every dino on screen.
  *
- * `spawnFor` puts players on a 4–8 m ring around the origin and the classic
- * projector shot (`[0.6, 3.6, 11.5]`, 42° fov) only covers about ±7 m at that
- * depth — the flagship E2E measured ~17 % of the ring falling outside the
- * frame, i.e. roughly one child in six not seeing their dinosaur. That is a
- * product bug, not a test threshold.
+ * `spawnFor` puts players on a 4–8 m ring and the hand-tuned projector shot
+ * only covers about ±7 m at that depth, which left ~17 % of the ring outside
+ * the frame — roughly one child in six not seeing their dinosaur.
  *
- * The fix is a fit-to-bounds: keep the hand-tuned *direction* and field of view
- * of the projector shot (it is what makes the world look like a diorama rather
- * than a map) and simply dolly the camera back along that same axis until every
- * point it must show is inside the frustum, with a margin.
- *
- * Properties that matter elsewhere:
- *   • **clamped at 1×** — an empty or one-dino lobby gets exactly the framing it
- *     had before, so a lonely first dinosaur is never a speck;
- *   • **pure and deterministic** — two clients holding the same room state
- *     compute the same camera, which is what keeps the flagship's cross-client
- *     canvas comparison meaningful;
- *   • **quantised** — the scale is rounded, so a millimetre of state noise can
- *     never produce a visibly different frame on one screen only.
+ * The fix keeps the shot's *direction* and field of view (what makes the world
+ * look like a diorama rather than a map) and dollies back along the same axis
+ * until everything fits. Three properties are relied on elsewhere: it is
+ * clamped at 1×, so a one-dino lobby is framed exactly as before and a lonely
+ * dinosaur is never a speck; it is pure, so two clients with the same state
+ * compute the same camera, which is what makes the flagship's cross-client
+ * canvas comparison meaningful; and the scale is quantised, so a millimetre of
+ * state noise cannot produce a visibly different frame on one screen only.
  */
 
 export interface Point3 {
@@ -58,11 +51,10 @@ const STEP = 1.04;
 const FOV_STEP = 2;
 
 /**
- * The base shot, dollied back far enough to contain `points`.
- *
- * `points` are world-space positions that must be visible — callers pass the
- * corners of each dino's reachable box at foot *and* head height, so the
- * guarantee holds for every instant of the wander, not just for right now.
+ * The base shot, dollied back far enough to contain `points` — world-space
+ * positions that must be visible. Callers pass the corners of each dino's
+ * reachable box at foot *and* head height, so the guarantee holds for every
+ * instant of the wander rather than just for right now.
  */
 export function fitShotToPoints(
   base: CameraShot,
@@ -86,9 +78,9 @@ export function fitShotToPoints(
     scale = Math.min(scale * STEP, maxScale);
   }
 
-  // 2. A portrait viewport (a phone on `/play`) has a horizontal field so
-  //    narrow that no reasonable distance contains a 16 m field — the lens has
-  //    to widen too. Landscape projectors never reach this branch.
+  // 2. A portrait viewport (a phone on `/play`) has a horizontal field so narrow
+  //    that no reasonable distance contains a 16 m world; the lens has to widen
+  //    too. Landscape projectors never reach this branch.
   let fov = base.fov;
   while (fov < maxFov && !fits(scale, fov)) {
     fov = Math.min(fov + FOV_STEP, maxFov);

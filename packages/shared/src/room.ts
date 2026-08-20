@@ -1,15 +1,10 @@
 /**
- * ═══════════════════════════════════════════════════════════════════════════
- *  COLYSEUS ROOM SPEC — FROZEN CONTRACT (Wave 1)
- * ═══════════════════════════════════════════════════════════════════════════
- *
  * Zod mirrors of the Colyseus `LobbyRoom` synchronized state and its messages.
  *
- * Colyseus syncs via `@colyseus/schema` classes (see `apps/server/src/rooms`),
- * which cannot themselves be Zod objects. These schemas are the authoritative
- * *shape* description: the server's Schema classes must stay structurally
- * assignable to them, and clients (`apps/web`, E2E) parse against them so a
- * drift between server and client fails loudly instead of silently.
+ * Colyseus syncs via `@colyseus/schema` classes, which cannot themselves be Zod
+ * objects, so these are the authoritative *shape*: the server's Schema classes
+ * must stay structurally assignable to them, and clients parse against them so
+ * server/client drift fails loudly instead of silently.
  */
 import { z } from 'zod';
 import {
@@ -24,10 +19,9 @@ import {
 export const LOBBY_ROOM_NAME = 'lobby';
 
 /**
- * Matchmaking filter — **one room per lobby code**. Added Wave 3 Chunk 3.3
- * (additive). `gameServer.define(LOBBY_ROOM_NAME, LobbyRoom).filterBy([...])`
- * on the server; clients therefore reach their lobby with
- * `joinOrCreate(LOBBY_ROOM_NAME, { code })` and never need a Colyseus room id.
+ * Matchmaking filter — one room per lobby code. Clients therefore reach their
+ * lobby with `joinOrCreate(LOBBY_ROOM_NAME, { code })` and never need to know a
+ * Colyseus room id.
  */
 export const LOBBY_ROOM_FILTER: readonly string[] = ['code'];
 
@@ -53,24 +47,21 @@ export const PlayerStateSchema = z.object({
 export type PlayerState = z.infer<typeof PlayerStateSchema>;
 
 /**
- * How often the room refreshes {@link LobbyStateSchema}'s `serverTime`.
- * Added Wave 5 Chunk 5.1. Each tick is one small number in the next patch, and
- * every tick re-estimates the client's clock offset, so this is both the worst
- * staleness a freshly joined client can see before its first refresh *and* how
- * fast an estimate made on a busy page (a late-processed patch reads as a
- * too-small offset) converges on the truth.
+ * How often the room refreshes {@link LobbyStateSchema}'s `serverTime`. This is
+ * both the worst staleness a freshly joined client sees before its first
+ * refresh and how fast a bad estimate converges — a patch processed late on a
+ * busy page reads as a too-small offset, and only a later tick corrects it.
  */
 export const SERVER_TIME_TICK_MS = 500;
 
 /**
  * The whole synchronized room state.
  *
- * `motionSeed` / `motionEpoch` / `serverTime` were added in Wave 5 Chunk 5.1
- * (**additive**) so that idle motion is identical on every screen: the server
- * issues the seed and the epoch the wander is timed from, and `serverTime` —
- * refreshed every {@link SERVER_TIME_TICK_MS} — lets a client estimate its
- * offset from the server's clock. All three default so a client can still read
- * a state produced by an older server (it then falls back to local motion).
+ * The server issues `motionSeed` and the `motionEpoch` the wander is timed
+ * from, and `serverTime` lets a client estimate its offset from the server's
+ * clock — together they make idle motion identical on every screen. All three
+ * default, so a client can still read state from an older server and fall back
+ * to local motion.
  */
 export const LobbyStateSchema = z.object({
   code: z.string(),
@@ -96,15 +87,12 @@ export const JoinLobbyOptionsSchema = z.object({
 export type JoinLobbyOptions = z.infer<typeof JoinLobbyOptionsSchema>;
 
 /**
- * The options actually put on the wire by `joinOrCreate(LOBBY_ROOM_NAME, …)`.
- * Added Wave 3 Chunk 3.3 (**additive** — {@link JoinLobbyOptionsSchema} is
- * untouched and still describes an uploader's identity fields).
+ * The options actually put on the wire by `joinOrCreate`.
  *
  * `code` is required because it is the matchmaking filter. Everything else is
- * optional so a **spectator** (the projector view, or a phone that has not
- * drawn yet) can join with `{ code }` alone: it watches the world and gets no
- * entry in `players`. A client that supplies a `name` is a participant and is
- * added to the synchronized player map.
+ * optional so a **spectator** — the projector, or a phone that has not drawn
+ * yet — can join with `{ code }` alone and get no entry in `players`. Supplying
+ * a `name` makes the client a participant.
  */
 export const LobbyJoinOptionsSchema = z.object({
   code: LobbyCodeSchema,
@@ -118,9 +106,8 @@ export const LobbyJoinOptionsSchema = z.object({
 export type LobbyJoinOptions = z.infer<typeof LobbyJoinOptionsSchema>;
 
 /**
- * Structured reasons a join can be refused, sent as the Colyseus `ServerError`
- * code (`err.code` on the client). Deliberately outside Colyseus's own reserved
- * 42xx range. Added Wave 3 Chunk 3.3 (additive).
+ * Structured reasons a join can be refused, surfaced as `err.code` on the
+ * client. Deliberately outside Colyseus's own reserved 42xx range.
  */
 export const ROOM_ERROR_CODES = {
   /** Options failed {@link LobbyJoinOptionsSchema}. */

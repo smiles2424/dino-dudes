@@ -1,21 +1,11 @@
 /**
- * `POST /api/avatars` — the multipart upload at the heart of the app.
+ * `POST /api/avatars` — the multipart upload at the heart of the app. The
+ * numbered steps below run in an order chosen for their failure modes; the
+ * ones worth knowing are marked where they happen.
  *
- * Order of operations (each step's failure mode matters):
- *   0. rate limit by IP              → 429 `rate_limited`, body never read
- *   1. read the multipart body       → structured error, nothing persisted
- *   2. validate PNG + Texture Spec   → structured error, nothing persisted
- *   3. sha256 → content address      → the texture's identity
- *   3b. rate limit by IP + player    → 429 `rate_limited`, nothing persisted
- *   4. lobby lookup                  → 404 / lobby_closed
- *   5. player row (reused if this name is already in this lobby)
- *   6. texture row (shared, content-addressed) + this player's wearer row
- *   7. lobby membership (Postgres + Redis)
- *   8. cache texture bytes in memory + Redis
- *   9. ⚑ in-process fan-out hook for Chunk 3.3
- *
- * Steps 7–9 are best-effort: once the rows are committed the upload has
- * succeeded, and a Redis blip must not tell the phone to re-shoot the drawing.
+ * Steps 7–9 (membership, caching, fan-out) are best effort: once the rows are
+ * committed the upload has succeeded, and a Redis blip must never tell the
+ * phone to re-shoot the drawing.
  */
 import { createHash } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
@@ -120,9 +110,8 @@ export async function registerAvatarRoutes(app: FastifyInstance): Promise<void> 
 
     // 0. rate limit by IP ---------------------------------------------------
     // Before the body is drained on purpose: a phone stuck in a retry loop
-    // should cost this server a header parse, not 2 MB of buffering per try.
-    // Ten times the per-person allowance, because a whole class shares one
-    // school Wi-Fi NAT and must be able to upload at once.
+    // should cost a header parse, not 2 MB of buffering per try. Ten times the
+    // per-person allowance, because a whole class shares one school Wi-Fi NAT.
     const ip = request.ip;
     refuseIfLimited(reply, ipUploadLimiter.take(`ip:${ip}`), {
       scope: 'ip',
@@ -199,25 +188,25 @@ export async function registerAvatarRoutes(app: FastifyInstance): Promise<void> 
     if (!player) throw new Error('failed to create player row');
 
     // 6a. texture -----------------------------------------------------------
-    // The blob is content-addressed and **shared** (Wave 5, Chunk 5.2): the row
-    // is keyed by the sha256 of its own bytes and says nothing about who drew
-    // it, so storing it twice is a no-op rather than a fight over ownership.
-    // `onConflictDoNothing` is race-safe against a simultaneous identical
-    // upload in a way a SELECT-then-INSERT is not, and the bytes are never
-    // rewritten — a different drawing is by definition a different hash.
+    // Content-addressed and **shared**: the row is keyed by the sha256 of its
+    // own bytes and says nothing about who drew it, so storing it twice is a
+    // no-op rather than a fight over ownership. `onConflictDoNothing` is
+    // race-safe against a simultaneous identical upload in a way
+    // SELECT-then-INSERT is not, and bytes are never rewritten — a different
+    // drawing is by definition a different hash.
     await db()
       .insert(textures)
       .values({ hash: textureHash, bytes: textureBytes })
       .onConflictDoNothing({ target: textures.hash });
 
     // 6b. avatar (the wearer record) ------------------------------------------
-    // One row per player — `avatars.player_id` is UNIQUE — so a retake replaces
-    // what this child is wearing instead of stacking up history, and two
-    // children who upload byte-identical pixels simply *both* point at the same
-    // texture. Before the 5.2 split this upserted on `texture_hash`, which made
-    // the second uploader steal the first player's only avatar row and left
-    // them with no drawing whenever the lobby was rehydrated from Postgres.
-    // `source_photo` is only overwritten when this upload actually carried one.
+    // One row per player (`avatars.player_id` is UNIQUE), so a retake replaces
+    // what this child is wearing rather than stacking up history, and two
+    // children with byte-identical pixels both point at the same texture.
+    // Upserting on `texture_hash` instead — as this did before the split —
+    // let the second uploader steal the first player's only avatar row, and
+    // left them with no drawing whenever the lobby rehydrated from Postgres.
+    // `source_photo` is only overwritten when this upload carried one.
     let avatarRow: typeof avatars.$inferSelect | undefined;
     try {
       [avatarRow] = await db()
@@ -268,9 +257,9 @@ export async function registerAvatarRoutes(app: FastifyInstance): Promise<void> 
       request.log.warn({ err, textureHash }, 'redis side-effects failed after avatar upload');
     }
 
-    // 9. ⚑ CHUNK 3.3 HOOK — in-process Colyseus fan-out.
-    //    No-op until `setAvatarBroadcaster()` is called at boot; see
-    //    `src/avatar-events.ts` for exactly what 3.3 needs to register.
+    // 9. in-process Colyseus fan-out ----------------------------------------
+    // A no-op until `setAvatarBroadcaster()` is called at boot; see
+    // `src/avatar-events.ts`.
     await emitAvatarUpdated({ lobbyCode, playerId: player.id, modelSlug, textureHash });
 
     const body: CreateAvatarResponse = {
@@ -281,8 +270,8 @@ export async function registerAvatarRoutes(app: FastifyInstance): Promise<void> 
       },
       avatar: {
         id: avatarRow.id,
-        // Always this uploader since the Chunk 5.2 split: the wearer row is
-        // keyed by player, so a duplicate texture can no longer move it.
+        // Always this uploader: the wearer row is keyed by player, so a
+        // duplicate texture can no longer move it.
         playerId: avatarRow.playerId,
         modelSlug,
         textureHash: avatarRow.textureHash,

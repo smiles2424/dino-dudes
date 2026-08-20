@@ -1,10 +1,7 @@
 /**
- * Environment loading + validation.
- *
- * Wave 1 must boot with an empty `.env` (the CI build has no secrets), so every
- * third-party credential is optional here. Wave 3 tightens this by asserting
- * the DB/Redis values are present before touching those subsystems — see
- * `requireDatabaseUrl` / `requireUpstash`.
+ * Environment loading + validation. Every third-party credential is optional so
+ * the server boots with an empty `.env` (a CI build has no secrets); routes that
+ * need one assert it themselves via `requireDatabaseUrl` / `requireUpstash`.
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,17 +38,15 @@ const EnvSchema = z.object({
   PUBLIC_WEB_URL: z.string().default('http://localhost:5173'),
 
   /**
-   * `POST /api/avatars` uploads allowed per minute, per IP and per player
-   * (Wave 5, Chunk 5.2). `0` disables the limiter — which is the *default under
-   * `NODE_ENV=test`*, so the E2E suite (which uploads as fast as it can) stays
-   * deterministic. See `rate-limit.ts`.
+   * `POST /api/avatars` uploads allowed per minute, per IP and per player. `0`
+   * disables the limiter, which is the default under `NODE_ENV=test` so the E2E
+   * suite — which uploads as fast as it can — stays deterministic.
    */
   AVATAR_UPLOAD_LIMIT_PER_MIN: blankIsUnset(z.coerce.number().int().min(0).optional()),
 
   /**
-   * How long a lobby may sit with nothing happening before the next room
-   * disposal (or lobby creation) stamps its `closed_at`. See
-   * `lobby-lifecycle.ts`.
+   * How long a lobby may sit idle before the next room disposal or lobby
+   * creation stamps its `closed_at`. See `lobby-lifecycle.ts`.
    */
   LOBBY_IDLE_HOURS: blankIsUnset(z.coerce.number().min(0).default(12)),
 });
