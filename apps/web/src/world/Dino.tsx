@@ -7,7 +7,7 @@
  * position. `window.__world` is updated only once a texture is really on the
  * material, which is what the E2E asserts.
  */
-import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import { DoubleSide, Group, Mesh, MeshStandardMaterial } from 'three';
@@ -23,9 +23,13 @@ export interface DinoProps {
   textureUrl: string | null;
   /** Freeze all motion at t = 0 (screenshot mode). */
   frozen: boolean;
+  /** The lobby's motion seed (`''` in the server-less harness). */
+  seed: string;
+  /** Motion time in seconds — the *server's* clock in a live lobby. */
+  motionTime: () => number;
 }
 
-export function Dino({ player, textureUrl, frozen }: DinoProps): JSX.Element {
+export function Dino({ player, textureUrl, frozen, seed, motionTime }: DinoProps): JSX.Element {
   const groupRef = useRef<Group>(null);
   const shadowRef = useRef<Mesh>(null);
 
@@ -92,25 +96,42 @@ export function Dino({ player, textureUrl, frozen }: DinoProps): JSX.Element {
   }, [textureUrl, hash, material, player.id, player.modelSlug]);
 
   // ── Placement ───────────────────────────────────────────────────────────
-  useLayoutEffect(() => {
-    applyPose(0);
-    function applyPose(time: number): void {
-      const pose = poseAt(player, time);
-      groupRef.current?.position.set(pose.x, pose.y, pose.z);
-      if (groupRef.current) groupRef.current.rotation.y = pose.rotationY;
+  // `applyPose` also publishes the *animated* transform to `window.__world`,
+  // which is how the flagship E2E compares two browsers mid-wander.
+  const applyPose = useCallback(
+    (time: number): void => {
+      const pose = poseAt(player, time, seed);
+      const group = groupRef.current;
+      if (group) {
+        group.position.set(pose.x, pose.y, pose.z);
+        group.rotation.y = pose.rotationY;
+      }
       shadowRef.current?.position.set(pose.x, 0.015, pose.z);
-    }
-  }, [player]);
+      worldDebug.poses[player.id] = {
+        x: pose.x,
+        y: pose.y,
+        z: pose.z,
+        rotationY: pose.rotationY,
+        t: time,
+      };
+    },
+    [player, seed],
+  );
 
-  useFrame((state) => {
+  useLayoutEffect(() => {
+    applyPose(frozen ? 0 : motionTime());
+  }, [applyPose, frozen, motionTime]);
+
+  useEffect(() => {
+    const id = player.id;
+    return () => {
+      delete worldDebug.poses[id];
+    };
+  }, [player.id]);
+
+  useFrame(() => {
     if (frozen) return;
-    const pose = poseAt(player, state.clock.elapsedTime);
-    const group = groupRef.current;
-    if (group) {
-      group.position.set(pose.x, pose.y, pose.z);
-      group.rotation.y = pose.rotationY;
-    }
-    shadowRef.current?.position.set(pose.x, 0.015, pose.z);
+    applyPose(motionTime());
   });
 
   return (

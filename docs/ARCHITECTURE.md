@@ -96,12 +96,21 @@ CREATE TABLE players (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- The drawing: content-addressed and SHARED (Wave 5, Chunk 5.2). It says
+-- nothing about who drew it, so identical bytes are one row and nobody's
+-- avatar can be stolen by a duplicate upload.
+CREATE TABLE textures (
+  hash       text PRIMARY KEY,             -- sha256 of `bytes`, lowercase hex
+  bytes      bytea NOT NULL,               -- processed 1024x1024 PNG
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- Who is wearing which drawing: exactly one row per player.
 CREATE TABLE avatars (
   id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  player_id    uuid NOT NULL REFERENCES players(id),
+  player_id    uuid NOT NULL UNIQUE REFERENCES players(id),
   model_slug   text NOT NULL,              -- 'trex' | 'stego' | ...
-  texture      bytea NOT NULL,             -- processed 1024x1024 PNG
-  texture_hash text NOT NULL UNIQUE,       -- sha256, content address
+  texture_hash text NOT NULL REFERENCES textures(hash),   -- NOT unique
   source_photo bytea,                      -- optional original for reprocessing
   created_at   timestamptz NOT NULL DEFAULT now()
 );

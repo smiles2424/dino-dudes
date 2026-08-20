@@ -1,26 +1,13 @@
 #!/usr/bin/env node
 /**
- * Delete the rows the browser E2E suite leaves in Neon (Wave 4, Chunk 4.3).
+ * Delete the rows the browser E2E suite leaves in Neon. Playwright's
+ * `globalTeardown` runs this after the last test; `pnpm e2e:cleanup` by hand.
  *
- * E2E #3, #4 and the flagship all talk to the real API, so every run persists a
- * lobby, a player and an avatar. Nothing in Playwright owns a database client,
- * so the litter used to accumulate for ever. This script is the cleanup path:
- * Playwright's `globalTeardown` runs it after the last test, and it can also be
- * run by hand (`pnpm e2e:cleanup`).
- *
- * **Surgical by construction.** It only ever touches rows whose *name* carries
- * the e2e tag the suite stamps on everything it creates:
- *
- *   lobbies.name  `e2e <8 hex>`     (`e2e 3f2a1b9c`)
- *   players.name  `e2e-<8 hex>…`    (`e2e-3f2a1b9c`, `e2e-3f2a1b9c-a`)
- *
- * Both patterns are anchored, so a real lobby or a real child's name can never
- * match. Avatars and lobby_members are deleted only via those ids (foreign keys
- * mean they have to go first anyway).
- *
- * Never fails the caller: with no `DATABASE_URL` it prints a SKIP line and
- * exits 0 (the same rule `validate:connections` follows), and a database error
- * is reported and swallowed — leftover rows must never turn a green suite red.
+ * Surgical by construction: it only touches rows whose *name* carries the tag
+ * the suite stamps on everything it creates, and both patterns are anchored, so
+ * a real lobby or a real child's name can never match. Never fails the caller —
+ * no `DATABASE_URL` prints SKIP, and a database error is swallowed, because
+ * leftover rows must not turn a green suite red.
  */
 import { config } from 'dotenv';
 import { fileURLToPath } from 'node:url';
@@ -79,10 +66,18 @@ try {
     const deletedLobbies = await client.query('DELETE FROM lobbies WHERE id = ANY($1::uuid[])', [
       lobbyIds,
     ]);
+    // The drawings live in their own content-addressed
+    // table, shared between however many players wear them — so they are
+    // deleted by "nobody is wearing this any more", not by owner. Safe for
+    // concurrent runs: a texture another run is still using has a wearer row.
+    const textures = await client.query(
+      'DELETE FROM textures t WHERE NOT EXISTS (SELECT 1 FROM avatars a WHERE a.texture_hash = t.hash)',
+    );
 
     console.log(
       `CLEAN e2e cleanup — ${deletedLobbies.rowCount} lobbies, ${deletedPlayers.rowCount} players, ` +
-        `${avatars.rowCount} avatars, ${members.rowCount} memberships (${Date.now() - t0}ms)`,
+        `${avatars.rowCount} avatars, ${textures.rowCount} textures, ${members.rowCount} memberships ` +
+        `(${Date.now() - t0}ms)`,
     );
   }
 } catch (err) {

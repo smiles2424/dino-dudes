@@ -44,9 +44,9 @@ export class ApiClientError extends Error {
 /**
  * `GET /api/lobbies/:code` — the capture flow's join-code validation.
  *
- * Checking the code *before* the photo step is deliberate: it is much kinder
- * to say "no lobby with that code" while the phone is still in the queue than
- * after someone has drawn, photographed and waited on an upload.
+ * Checked *before* the photo step deliberately: far kinder to say "no lobby
+ * with that code" while the phone is still in the queue than after someone has
+ * drawn, photographed and waited on an upload.
  */
 export async function fetchLobby(code: string, signal?: AbortSignal): Promise<GetLobbyResponse> {
   const res = await request(`${API_BASE}/api/lobbies/${encodeURIComponent(code)}`, { signal });
@@ -54,6 +54,8 @@ export async function fetchLobby(code: string, signal?: AbortSignal): Promise<Ge
     throw await apiError(res, {
       404: `No lobby with the code ${code}. Check the code on the big screen.`,
       400: `${code} is not a valid lobby code.`,
+      // A closed lobby is a 409, not a 200 with `closedAt` set.
+      409: 'That lobby has been closed. Ask for the new code on the big screen.',
     });
   }
   return GetLobbyResponseSchema.parse(await res.json());
@@ -70,7 +72,7 @@ export interface UploadAvatarInput {
   signal?: AbortSignal;
 }
 
-/** `POST /api/avatars` — multipart, exactly the shape Chunk 3.2 accepts. */
+/** `POST /api/avatars` — multipart, exactly the shape the server accepts. */
 export async function uploadAvatar(input: UploadAvatarInput): Promise<CreateAvatarResponse> {
   const body = new FormData();
   body.set('lobbyCode', input.lobbyCode);
@@ -86,7 +88,9 @@ export async function uploadAvatar(input: UploadAvatarInput): Promise<CreateAvat
   if (!res.ok) {
     throw await apiError(res, {
       404: 'That lobby has gone away. Check the code on the big screen.',
+      409: 'That lobby has been closed. Ask for the new code on the big screen.',
       413: 'That drawing came out too big to send. Take the photo again.',
+      429: 'Too many tries in a row. Wait a moment, then send the drawing again.',
     });
   }
   return CreateAvatarResponseSchema.parse(await res.json());

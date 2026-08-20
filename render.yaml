@@ -1,0 +1,80 @@
+# Render Blueprint — the server.
+#
+# Render over Fly because the human deploying this has no hosting credentials
+# yet and will do it once, under time pressure, before a school event: Render
+# reads this file from the repo, builds the Dockerfile itself, and asks for the
+# secrets in a web form — no CLI, no local Docker daemon. The Fly equivalent is
+# in docs/DEPLOY.md.
+#
+# Every `sync: false` below means Render prompts for that value and never stores
+# it in git.
+services:
+  - type: web
+    name: dino-dudes-server
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+
+    # ── The single-instance rule (read docs/DEPLOY.md before changing) ───────
+    # Colyseus rooms, the upload rate limiter and the texture memo are all
+    # per-process. Without a Redis presence driver, two instances put two
+    # children in the "same" lobby into two different worlds. This is not a
+    # capacity question: the loadtest ran 50 clients in one room on 82 MB.
+    numInstances: 1
+    # Free instances sleep after 15 minutes and cold-start in ~50 s. That is the
+    # projector going blank between two classes. Starter is the event plan.
+    plan: starter
+    region: frankfurt
+
+    # Render restarts the service if this stops answering. `/healthz` returns
+    # 200 whenever the process is serving and reports Postgres/Redis in the
+    # body — a Neon blip must not restart a room full of connected clients.
+    healthCheckPath: /healthz
+
+    # CI triggers the deploy through a deploy hook (see .github/workflows/ci.yml)
+    # so that a push only ships after build + test + e2e have gone green.
+    # Leaving this true as well would deploy twice, one of them untested.
+    autoDeploy: false
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Render injects PORT itself; the server reads it (env.PORT) and binds
+      # HOST 0.0.0.0 by default, which is what a container needs.
+
+      # ── Neon Postgres ────────────────────────────────────────────────────
+      # Pooled (PgBouncer) for the app…
+      - key: DATABASE_URL
+        sync: false
+      # …direct/unpooled for the migration that runs on boot. DDL over the
+      # pooler is unreliable; the entrypoint uses this one.
+      - key: DATABASE_URL_UNPOOLED
+        sync: false
+
+      # ── Upstash Redis (REST) ─────────────────────────────────────────────
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+
+      # ── App ──────────────────────────────────────────────────────────────
+      # Any random 32+ char string: `openssl rand -hex 32`.
+      - key: SESSION_SECRET
+        generateValue: true
+      # The static site's URL. This is what the QR code on the projector
+      # encodes, so it MUST be the address a phone can actually open.
+      - key: PUBLIC_WEB_URL
+        sync: false
+      # Comma-separated allowlist. `*` is the default and is fine for a party
+      # game; set it to the site URL if you would rather be strict.
+      - key: CORS_ORIGIN
+        value: '*'
+
+      # ── Optional knobs (defaults are the tuned values) ────────────────────
+      # Uploads per minute per player, 10x that per IP (a class shares one NAT).
+      # Leave unset for 12/min, burst 6.
+      - key: AVATAR_UPLOAD_LIMIT_PER_MIN
+        sync: false
+      # Hours of silence before a lobby is stamped closed. Unset == 12.
+      - key: LOBBY_IDLE_HOURS
+        sync: false

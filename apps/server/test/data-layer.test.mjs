@@ -1,17 +1,12 @@
 /**
- * Chunk 3.1 integration test — runs against the **real** Neon + Upstash.
+ * The data layer against the real Neon + Upstash. Nothing is mocked on purpose:
+ * the whole point is that a 1024² PNG survives a round-trip through `bytea` and
+ * through Upstash's JSON/REST transport byte for byte, and a fake would prove
+ * nothing.
  *
- * There is no mocking here on purpose: the whole point of the data layer is
- * that a 1024² PNG survives a round-trip through `bytea` and through Upstash's
- * JSON/REST transport byte-for-byte. A fake would prove nothing.
- *
- * Safety rules this file follows:
- *  - every row/key it creates is tagged with a unique per-run id, so concurrent
- *    runs (two agents, CI + local) can never collide;
- *  - `after()` deletes everything it created, by primary key, even if a test
- *    threw halfway through;
- *  - with no credentials in the environment every test **skips** rather than
- *    fails, so CI on a forked PR (no secrets) stays green.
+ * Every row and key is tagged with a per-run id so concurrent runs cannot
+ * collide, `after()` deletes them by primary key even if a test threw, and with
+ * no credentials every test skips rather than fails.
  */
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
@@ -21,7 +16,7 @@ import { after, before, describe, test } from 'node:test';
 import { eq, inArray } from 'drizzle-orm';
 
 import { hasDatabase } from '../dist/env.js';
-import { avatars, closeDb, db, lobbies, lobbyMembers, players } from '../dist/db.js';
+import { avatars, closeDb, db, lobbies, lobbyMembers, players, textures } from '../dist/db.js';
 import { lobbyPlayersKey, redis, textureKey } from '../dist/redis.js';
 
 const RUN_ID = `t${randomUUID().replace(/-/g, '').slice(0, 10)}`;
@@ -31,7 +26,7 @@ const skipRedis = !hasRedis && 'no UPSTASH_REDIS_REST_* — skipping real-Upstas
 const skipBoth = skipPg || skipRedis;
 
 /** Ids/keys to remove in `after()`; appended to as soon as anything is created. */
-const created = { players: [], avatars: [], lobbies: [], redisKeys: [] };
+const created = { players: [], avatars: [], textures: [], lobbies: [], redisKeys: [] };
 
 // ---------------------------------------------------------------------------
 // A genuinely valid (tiny) PNG, so the bytes we round-trip are real image bytes
@@ -96,7 +91,7 @@ describe('Chunk 3.1 data layer (real Neon + Upstash)', () => {
     assert.equal(TEXTURE.subarray(1, 4).toString('ascii'), 'PNG');
   });
 
-  test('player + avatar insert/read round-trip keeps texture bytes identical', { skip: skipPg }, async () => {
+  test('texture + wearer round-trip keeps bytes identical, and one drawing has many wearers', { skip: skipPg }, async () => {
     const [player] = await db()
       .insert(players)
       .values({ name: `${RUN_ID}-ada` })
@@ -107,45 +102,90 @@ describe('Chunk 3.1 data layer (real Neon + Upstash)', () => {
     assert.equal(player.name, `${RUN_ID}-ada`);
     assert.ok(player.createdAt instanceof Date);
 
+    // The blob lives in its own content-addressed table.
+    await db().insert(textures).values({ hash: TEXTURE_HASH, bytes: TEXTURE });
+    created.textures.push(TEXTURE_HASH);
+
+    const [storedTexture] = await db().select().from(textures).where(eq(textures.hash, TEXTURE_HASH));
+    assert.ok(Buffer.isBuffer(storedTexture.bytes), 'bytea must come back as a Buffer');
+    assert.equal(storedTexture.bytes.length, TEXTURE.length);
+    assert.ok(storedTexture.bytes.equals(TEXTURE), 'texture bytes must be byte-identical');
+    assert.equal(
+      createHash('sha256').update(storedTexture.bytes).digest('hex'),
+      TEXTURE_HASH,
+      'sha256 of the stored texture must equal its content address',
+    );
+
+    // Storing the same drawing twice is a no-op, not a fight over ownership.
+    const reinsert = await db()
+      .insert(textures)
+      .values({ hash: TEXTURE_HASH, bytes: TEXTURE })
+      .onConflictDoNothing({ target: textures.hash })
+      .returning({ hash: textures.hash });
+    assert.equal(reinsert.length, 0, 're-storing identical bytes must change nothing');
+
     const [avatar] = await db()
       .insert(avatars)
-      .values({
-        playerId: player.id,
-        modelSlug: 'trex',
-        texture: TEXTURE,
-        textureHash: TEXTURE_HASH,
-        sourcePhoto: null,
-      })
+      .values({ playerId: player.id, modelSlug: 'trex', textureHash: TEXTURE_HASH, sourcePhoto: null })
       .returning({ id: avatars.id });
     created.avatars.push(avatar.id);
 
     const [readBack] = await db().select().from(avatars).where(eq(avatars.id, avatar.id));
-    assert.ok(Buffer.isBuffer(readBack.texture), 'bytea must come back as a Buffer');
-    assert.equal(readBack.texture.length, TEXTURE.length);
-    assert.ok(readBack.texture.equals(TEXTURE), 'texture bytes must be byte-identical');
-    assert.equal(
-      createHash('sha256').update(readBack.texture).digest('hex'),
-      TEXTURE_HASH,
-      'sha256 of the stored texture must equal its content address',
-    );
     assert.equal(readBack.modelSlug, 'trex');
+    assert.equal(readBack.textureHash, TEXTURE_HASH);
     assert.equal(readBack.sourcePhoto, null);
 
-    // texture_hash is the content address: a second row with the same hash must fail.
-    // (Drizzle wraps driver errors, and its `message` embeds the whole query —
-    // including the PNG bytes — so assert on the pg SQLSTATE in `cause` instead.)
+    // ── The "one texture, one owner" sharp edge, in the schema ─────────────
+    // A SECOND player wearing byte-identical pixels is now perfectly legal…
+    const [other] = await db()
+      .insert(players)
+      .values({ name: `${RUN_ID}-bob` })
+      .returning({ id: players.id });
+    created.players.push(other.id);
+
+    const [shared] = await db()
+      .insert(avatars)
+      .values({ playerId: other.id, modelSlug: 'stego', textureHash: TEXTURE_HASH })
+      .returning({ id: avatars.id });
+    created.avatars.push(shared.id);
+    assert.notEqual(shared.id, avatar.id, 'two wearers of one drawing are two rows');
+
+    const wearers = await db().select().from(avatars).where(eq(avatars.textureHash, TEXTURE_HASH));
+    assert.equal(wearers.length, 2, 'one texture, two owners');
+
+    // …while a second avatar row for the SAME player is not: player_id is
+    // UNIQUE, so a retake replaces the drawing rather than stacking up.
+    // (Drizzle wraps driver errors and its `message` embeds the whole query, so
+    // assert on the pg SQLSTATE in `cause` instead.)
     let dupe;
     try {
       const [row] = await db()
         .insert(avatars)
-        .values({ playerId: player.id, modelSlug: 'stego', texture: TEXTURE, textureHash: TEXTURE_HASH })
+        .values({ playerId: player.id, modelSlug: 'raptor', textureHash: TEXTURE_HASH })
         .returning({ id: avatars.id });
       created.avatars.push(row.id);
     } catch (err) {
       dupe = err;
     }
-    assert.ok(dupe, 'inserting a second avatar with the same texture_hash must fail');
-    assert.equal(dupe.cause?.code ?? dupe.code, '23505', 'expected unique_violation on texture_hash');
+    assert.ok(dupe, 'inserting a second avatar for the same player must fail');
+    assert.equal(dupe.cause?.code ?? dupe.code, '23505', 'expected unique_violation on player_id');
+
+    // The FK is real: a wearer cannot point at a drawing nobody stored.
+    const [third] = await db()
+      .insert(players)
+      .values({ name: `${RUN_ID}-cy` })
+      .returning({ id: players.id });
+    created.players.push(third.id);
+
+    let orphan;
+    try {
+      await db()
+        .insert(avatars)
+        .values({ playerId: third.id, modelSlug: 'bronto', textureHash: 'a'.repeat(64) });
+    } catch (err) {
+      orphan = err;
+    }
+    assert.equal(orphan?.cause?.code ?? orphan?.code, '23503', 'expected a foreign_key_violation');
   });
 
   test('lobby + lobby_members persist and join by code', { skip: skipPg }, async () => {
@@ -234,6 +274,10 @@ describe('Chunk 3.1 data layer (real Neon + Upstash)', () => {
     // Children first: avatars + lobby_members reference players/lobbies.
     for (const [label, fn] of [
       ['avatars', () => created.avatars.length && db().delete(avatars).where(inArray(avatars.id, created.avatars))],
+      [
+        'textures',
+        () => created.textures.length && db().delete(textures).where(inArray(textures.hash, created.textures)),
+      ],
       [
         'lobby_members',
         () =>

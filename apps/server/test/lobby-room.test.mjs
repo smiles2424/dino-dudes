@@ -1,31 +1,23 @@
 /**
- * Chunk 3.3 integration test — **the flagship of Wave 3**.
+ * The integration test with nothing stubbed: the real Fastify app, the
+ * real Colyseus server sharing its `http.Server`, real WebSocket clients, real
+ * HTTP over a real socket, the real Neon database and the real Upstash cache.
  *
- * Everything here is real: the real Fastify app, the real Colyseus server
- * sharing its `http.Server`, real WebSocket clients (`colyseus.js` via
- * `@colyseus/testing`), real HTTP over a real socket (`fetch`, not
- * `fastify.inject`), the real Neon database and the real Upstash cache.
+ * It walks the product in miniature — create a lobby over HTTP, join it as a
+ * participant and as a spectator, POST a 1024² PNG, and assert both clients'
+ * synchronized state shows the new textureHash and that the bytes come back
+ * byte-identical.
  *
- * The journey it walks is the product in miniature:
- *
- *   create a lobby over HTTP
- *     → client A joins the room by code (a phone in the world)
- *     → client B joins the same room as a spectator (the projector)
- *     → a 1024² PNG is POSTed to /api/avatars over HTTP for A's player
- *     → BOTH clients' synchronized state shows the new textureHash
- *     → GET /api/textures/:hash returns byte-identical PNG
- *
- * Safety rules (as in Chunks 3.1/3.2): every row is tagged with a unique
- * per-run id, `after()` deletes everything by primary key even after a failure,
- * and with no credentials the tests **skip** rather than fail so a secret-less
- * CI run stays green.
+ * Every row is tagged with a per-run id and deleted by primary key in `after()`
+ * even after a failure. With no credentials the tests **skip** rather than
+ * fail, so a secret-less CI run stays green.
  */
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { after, before, describe, test } from 'node:test';
 
 import { boot } from '@colyseus/testing';
-import { inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 
 import {
   LOBBY_ROOM_NAME,
@@ -36,7 +28,7 @@ import {
 
 import { makePng } from './fixture-png.mjs';
 import { buildApp } from '../dist/app.js';
-import { avatars, closeDb, db, lobbies, lobbyMembers, players } from '../dist/db.js';
+import { avatars, closeDb, db, lobbies, lobbyMembers, players, textures } from '../dist/db.js';
 import { hasDatabase } from '../dist/env.js';
 import { createGameServer } from '../dist/game-server.js';
 import { lobbyPlayersKey, redis, textureKey } from '../dist/redis.js';
@@ -64,8 +56,17 @@ const broadcastsB = [];
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
-/** Polls `predicate` until it returns something truthy, or gives up loudly. */
-async function waitFor(label, predicate, timeoutMs = 8000) {
+/**
+ * Polls `predicate` until it returns something truthy, or gives up loudly.
+ *
+ * The default ceiling is generous because every caller taking it asks a
+ * *correctness* question — did this ever reach the other client — while the
+ * answer costs a real Neon round-trip (`onJoin` resolves a player id against
+ * Postgres before the joining client enters state, 1–6 s from here) and this
+ * file runs alongside five other test processes. The one genuine latency
+ * budget in this file passes its own window explicitly; see the avatar test.
+ */
+async function waitFor(label, predicate, timeoutMs = 20_000) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     let value;
@@ -121,7 +122,6 @@ describe('Chunk 3.3 LobbyRoom (real Colyseus + Fastify + Neon + Upstash)', () =>
     created.redisKeys.push(lobbyPlayersKey(lobbyCode), textureKey(TEXTURE_HASH));
 
     assert.match(lobbyCode, /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{5}$/);
-    // Wave 4 hands this straight to the QR encoder.
     assert.ok(body.joinUrl.includes(`lobby=${lobbyCode}`), body.joinUrl);
   });
 
@@ -152,7 +152,7 @@ describe('Chunk 3.3 LobbyRoom (real Colyseus + Fastify + Neon + Upstash)', () =>
     assert.equal(me.textureHash, '', 'no drawing yet');
 
     // Position/heading are server-assigned, deterministic in the player id, so
-    // every client renders the same world (the Wave 4/5 consistency follow-up).
+    // every client renders the same world.
     // Compared with a tolerance: Colyseus's `'number'` field type is float32 on
     // the wire, so exact equality against a float64 would be wrong by ~1e-7.
     const spawn = spawnFor(me.id);
@@ -166,7 +166,6 @@ describe('Chunk 3.3 LobbyRoom (real Colyseus + Fastify + Neon + Upstash)', () =>
     }
     assert.ok(Math.hypot(me.position.x, me.position.z) >= 4, 'spawned on the ring, not on top of the camera');
 
-    // The Colyseus state really is the shape `@dino/shared` promises.
     LobbyStateSchema.parse(clientA.state.toJSON());
     assert.equal(clientA.state.code, lobbyCode);
   });
@@ -185,6 +184,55 @@ describe('Chunk 3.3 LobbyRoom (real Colyseus + Fastify + Neon + Upstash)', () =>
   });
 
   test(
+    'the room publishes a shared motion clock both clients agree on',
+    { skip: skipPg },
+    async () => {
+      const a = clientA.state.toJSON();
+      const b = clientB.state.toJSON();
+
+      // One seed per lobby, identical for everyone watching it: the clients
+      // hash it with each player id to derive that dino's wander.
+      assert.match(a.motionSeed, /^[0-9a-f]{16}$/, `motionSeed was ${a.motionSeed}`);
+      assert.equal(b.motionSeed, a.motionSeed, 'both clients must get one seed');
+      assert.equal(b.motionEpoch, a.motionEpoch, 'both clients must get one epoch');
+      assert.ok(
+        Math.abs(a.motionEpoch - Date.now()) < 60_000,
+        `motionEpoch ${a.motionEpoch} is not this server's clock`,
+      );
+
+      /*
+       * The whole scheme rests on millisecond precision surviving the wire.
+       * Colyseus's `'number'` is float32 for large values, which quantises a
+       * ~1.8e12 epoch to steps of ~131 s — hence `float64` in `LobbyRoom`.
+       *
+       * The bounds below separate those two worlds and nothing else; they are
+       * not a latency budget. A stalled event loop coalesces `clock` ticks, so
+       * the observed step is one tick on a quiet box and can be seconds on a
+       * busy one — both prove the same thing. 30 s sits an order of magnitude
+       * below the 131 s quantum float32 would show.
+       */
+      const first = clientA.state.toJSON().serverTime;
+      assert.ok(first > 0, 'serverTime must be published');
+      const advanced = await waitFor(
+        'serverTime to tick',
+        () => {
+          const now = clientA.state.toJSON().serverTime;
+          return now > first ? now : undefined;
+        },
+      );
+      const step = advanced - first;
+      assert.ok(step >= 200 && step < 30_000, `serverTime advanced by ${step}ms, expected ~500ms`);
+      assert.ok(
+        Math.abs(advanced - Date.now()) < 30_000,
+        `serverTime ${advanced} is ${Math.abs(advanced - Date.now())}ms from this process's clock`,
+      );
+
+      const parsed = LobbyStateSchema.parse(clientB.state.toJSON());
+      assert.equal(parsed.motionSeed, a.motionSeed);
+    },
+  );
+
+  test(
     'an avatar POSTed over HTTP reaches BOTH clients within the timeout',
     { skip: skipPg },
     async () => {
@@ -197,22 +245,17 @@ describe('Chunk 3.3 LobbyRoom (real Colyseus + Fastify + Neon + Upstash)', () =>
       const postStarted = Date.now();
       const body = await jsonRequest('/api/avatars', { method: 'POST', body: form }, 201);
       /*
-       * The budget starts when the upload is ACCEPTED, not when it is sent
-       * (Wave 4, Chunk 4.3 — the same correction E2E #3 needed).
-       *
-       * The promise is "a drawing is on the projector within five seconds of
-       * the server taking it": everything before that is a 1 MB multipart body
-       * crossing a home connection to Neon, which has been measured at
-       * anywhere from 1 s to 6 s from this machine and is not what a fan-out
-       * budget is for. Upload latency is printed so a regression there is
-       * still visible.
+       * The budget starts when the upload is ACCEPTED, not when it is sent:
+       * the promise is "on the projector within five seconds of the server
+       * taking it", and everything before that is a 1 MB body crossing a home
+       * connection to Neon (1–6 s). Upload latency is printed so a regression
+       * there stays visible.
        */
       const fanoutStarted = Date.now();
       created.players.push(body.player.id);
       created.avatars.push(body.avatar.id);
       assert.equal(body.avatar.textureHash, TEXTURE_HASH);
 
-      // ── the assertion this whole wave exists for ──────────────────────────
       for (const [label, room] of [
         ['A (participant)', clientA],
         ['B (spectator)', clientB],
@@ -303,6 +346,9 @@ describe('Chunk 3.3 LobbyRoom (real Colyseus + Fastify + Neon + Upstash)', () =>
         'avatars',
         () => created.players.length && db().delete(avatars).where(inArray(avatars.playerId, created.players)),
       );
+      // Textures are shared and content-addressed, so they are
+      // deleted by hash *after* the wearer rows that reference them.
+      await attempt('textures', () => db().delete(textures).where(eq(textures.hash, TEXTURE_HASH)));
       await attempt(
         'lobby_members',
         () =>

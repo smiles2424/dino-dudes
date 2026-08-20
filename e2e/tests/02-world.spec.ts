@@ -1,23 +1,16 @@
 /**
- * E2E #2 — Wave 2B (WS-C, the 3D world).
- *
- * Drives `/debug/world?static=1`: the harness renders the real world component
- * from a static JSON state + local PNGs — no backend, no Colyseus, no
- * pipeline — so this test covers geometry, the safe-area UV unwrap, texture
- * loading, the runtime texture swap and the `window.__world` contract that
+ * The 3D world, driven through `/debug/world?static=1`: the real world
+ * component rendered from a static JSON state and local PNGs, with no backend,
+ * Colyseus or pipeline behind it. Covers geometry, the safe-area UV unwrap,
+ * texture loading, the runtime texture swap, and the `window.__world` contract
  * every later wave asserts against.
  *
- * Determinism (why a single committed baseline is safe on every OS):
- *   • `?static=1` freezes motion at t = 0, pins DPR to 1, turns MSAA off and
- *     renders into a fixed 800×500 canvas, so nothing depends on the window;
- *   • the browser is forced onto SwiftShader (ANGLE's software rasteriser), so
- *     CI and laptops run the same rasteriser;
- *   • the canvas contains no text at all — nameplates are DOM, and they are
- *     masked out of the screenshot, so OS font rendering cannot move a pixel;
- *   • the scene uses no `Math.random()`: every wobble is derived from the
- *     player id.
- *
- * Nothing here modifies E2E #1.
+ * One committed screenshot baseline is valid on every OS because nothing here
+ * is allowed to vary: `?static=1` freezes motion at t = 0, pins DPR to 1, turns
+ * MSAA off and renders a fixed 800×500 canvas; the browser is forced onto
+ * SwiftShader so CI and laptops share a rasteriser; the canvas contains no text
+ * (nameplates are DOM and are masked out); and no wobble comes from
+ * `Math.random()` — it is all derived from the player id.
  */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -41,14 +34,22 @@ const drawn = players.filter((player) => player.textureHash !== '');
 const expectedApplied = Object.fromEntries(drawn.map((p) => [p.id, p.textureHash]));
 
 /**
- * The `window.__world` contract, mirrored here so the test is a real
- * type-checked consumer of it (the implementation lives in
- * `apps/web/src/world/world-debug.ts`).
+ * The `window.__world` contract, mirrored here so this test is a type-checked
+ * consumer of it. The implementation is `apps/web/src/world/world-debug.ts`.
  */
 declare global {
   interface Window {
     __world?: WorldDebugSnapshot & {
       setTexture?: (playerId: string, textureHash: string) => void;
+      /** `version: 3` — current motion time in seconds on the shared clock. */
+      motionTime?: () => number;
+      /** `version: 3` — the pose this client would render at time `t`. */
+      poseAtTime?: (
+        playerId: string,
+        t: number,
+      ) => { x: number; y: number; z: number; rotationY: number; t: number } | null;
+      /** `version: 3` — is this dino fully in frame at motion time `t`? */
+      playerOnScreen?: (playerId: string, t: number) => boolean | null;
     };
   }
 }
@@ -63,6 +64,28 @@ interface WorldDebugSnapshot {
     string,
     { x: number; y: number; z: number; heading: number; modelSlug: string }
   >;
+  /** Added in `version: 3` — the ANIMATED transform, rewritten every frame. */
+  poses: Record<
+    string,
+    { x: number; y: number; z: number; rotationY: number; t: number }
+  >;
+  /** Added in `version: 3` — how this page is timing the wander. */
+  motion: {
+    source: 'server' | 'local';
+    seed: string;
+    epoch: number;
+    offsetMs: number;
+    samples: number;
+  };
+  /** Added in `version: 3` — the shot after fit-to-bounds framing. */
+  camera: {
+    position: [number, number, number];
+    target: [number, number, number];
+    fov: number;
+    aspect: number;
+  };
+  /** Added in `version: 3` — dinos outside the viewport. Must be 0. */
+  offscreen: number;
   appliedTextures: Record<string, string>;
   textureErrors: Record<string, string>;
   pendingTextures: number;
@@ -85,6 +108,15 @@ test.use({
     ],
   },
 });
+
+/*
+ * Every test here builds the whole scene on SwiftShader, which costs 8–25 s,
+ * and three of them load the world twice — more than the 30 s default in
+ * `playwright.config.ts`, which is sized for the DOM specs. Nothing in this
+ * file asserts how *fast* the world appears, and the per-step waits below stay
+ * tight; only the total gets headroom, as 04 and 05 already do.
+ */
+test.describe.configure({ timeout: 120_000 });
 
 async function openWorld(page: import('@playwright/test').Page): Promise<void> {
   const failures: string[] = [];
@@ -113,8 +145,10 @@ test('the world harness renders every dino and applies every texture', async ({ 
 
   const world = (await page.evaluate(() => ({ ...window.__world }))) as WorldDebugSnapshot;
 
-  expect(world.version).toBe(2);
+  expect(world.version).toBe(3);
   expect(world.frozen).toBe(true);
+  // No server here, so the harness times its own wander.
+  expect(world.motion.source).toBe('local');
   expect(world.dinoCount).toBe(players.length);
   // `players` mirrors the state the renderer was handed, verbatim.
   expect(Object.keys(world.players).sort()).toEqual(players.map((p) => p.id).sort());
@@ -132,13 +166,11 @@ test('the world harness renders every dino and applies every texture', async ({ 
   expect(world.pendingTextures).toBe(0);
   expect(world.frames).toBeGreaterThan(0);
 
-  // Three distinct drawings really did land on three different dinos.
   expect(new Set(Object.values(world.appliedTextures)).size).toBe(drawn.length);
 
   // Geometry is per species, not per dino, and is built once.
   expect(world.geometryBuilds).toBe(new Set(players.map((p) => p.modelSlug)).size);
 
-  // Every player has a floating nameplate showing their name.
   await expect(page.getByTestId('nameplate')).toHaveCount(players.length);
   for (const player of players) {
     await expect(page.getByTestId('nameplate').filter({ hasText: player.name })).toBeVisible();
@@ -162,14 +194,12 @@ test('the frozen world canvas matches the committed baseline', async ({ page }) 
     // can never break the comparison.
     mask: [page.getByTestId('nameplate')],
     /*
-     * Tolerance rationale: with SwiftShader + fixed DPR + no in-canvas text the
-     * only expected cross-machine difference is ±1 LSB shading (absorbed by the
-     * default per-pixel `threshold` of 0.2) and the odd flipped pixel along a
-     * silhouette. The scene's total silhouette length is ≈6 k px of a 400 k px
-     * canvas (≈1.5 %), so 5 % leaves ~3× headroom for CI's rasteriser while
-     * still failing loudly on anything real: a missing dino, a texture applied
-     * to the wrong animal, a broken unwrap or a lighting/camera change all move
-     * far more than 5 % of the frame.
+     * With SwiftShader, a fixed DPR and no in-canvas text, the only expected
+     * cross-machine difference is ±1 LSB shading and the odd flipped pixel
+     * along a silhouette — and total silhouette is ≈1.5 % of the frame. 5 %
+     * leaves ~3× headroom while still failing loudly on anything real: a
+     * missing dino, a texture on the wrong animal, a broken unwrap, a lighting
+     * or camera change all move far more than that.
      */
     maxDiffPixelRatio: 0.05,
     animations: 'disabled',
@@ -177,6 +207,98 @@ test('the frozen world canvas matches the committed baseline', async ({ page }) 
   // The baseline was recorded on Windows/SwiftShader. If a future renderer or
   // browser bump makes this drift everywhere at once, re-record it with
   // `pnpm e2e:only -- --update-snapshots` and eyeball the new PNG in the diff.
+});
+
+/**
+ * Every dino must be on screen — asserted over a full wander period rather than
+ * at whatever instant the test caught, since the slowest dino here needs ≈39 s
+ * to close its orbit. Sampled through the same projection three.js renders
+ * with, so it tests the fit in `world/camera-fit.ts` and not a re-derivation.
+ */
+test('every dino stays inside the frame, for every moment of its wander', async ({ page }) => {
+  await openWorld(page);
+
+  const camera = await page.evaluate(() => window.__world?.camera);
+  expect(camera, 'the world reports the shot it framed').toBeTruthy();
+
+  const offFrame = await page.evaluate((ids) => {
+    const missed: string[] = [];
+    for (const id of ids) {
+      // 0.25 s steps over 60 s: more than one full orbit for the slowest dino.
+      for (let t = 0; t <= 60; t += 0.25) {
+        if (window.__world?.playerOnScreen?.(id, t) !== true) {
+          missed.push(`${id}@${t.toFixed(2)}s`);
+          break;
+        }
+      }
+    }
+    return missed;
+  }, players.map((player) => player.id));
+
+  expect(offFrame, 'no dinosaur may ever leave the frame').toEqual([]);
+  console.log(
+    `[e2e#2] framing: camera ${JSON.stringify(camera?.position)} fov ${camera?.fov} ` +
+      `covers all ${players.length} dinos for a full wander period`,
+  );
+
+  await page.goto('/debug/world');
+  await page.waitForFunction(() => (window.__world?.frames ?? 0) > 5, undefined, {
+    timeout: 25_000,
+  });
+  expect(await page.evaluate(() => window.__world?.offscreen)).toBe(0);
+});
+
+/**
+ * The venue case without a venue: twelve dinos on the 4–8 m spawn ring
+ * `spawnFor` uses, including the four cardinal points at the full 8 m — the
+ * geometry that used to put ~17 % of a lobby outside the frame.
+ *
+ * Both viewports matter. A portrait phone frustum is so narrow horizontally
+ * that dollying alone cannot contain a 16 m field, which is why the fit widens
+ * the lens once the dolly saturates.
+ */
+test('every dino stays inside the frame with a full lobby on the spawn ring', async ({ page }) => {
+  const crowd = LobbyStateSchema.parse(
+    JSON.parse(readFileSync(path.join(debugDir, 'world-crowd.json'), 'utf8')),
+  );
+  const crowdIds = Object.values(crowd.players).map((player) => player.id);
+
+  for (const viewport of [
+    { width: 960, height: 540 }, // a projector
+    { width: 380, height: 760 }, // a phone, portrait
+  ]) {
+    await page.goto(
+      `/debug/world?state=/debug/world-crowd.json&size=${viewport.width}x${viewport.height}`,
+    );
+    await page.waitForFunction(
+      (expected) =>
+        window.__world?.dinoCount === expected && (window.__world?.frames ?? 0) > 3,
+      crowdIds.length,
+      { timeout: 25_000 },
+    );
+
+    const missed = await page.evaluate((ids) => {
+      const off: string[] = [];
+      for (const id of ids) {
+        for (let t = 0; t <= 60; t += 0.25) {
+          if (window.__world?.playerOnScreen?.(id, t) !== true) {
+            off.push(`${id}@${t.toFixed(2)}s`);
+            break;
+          }
+        }
+      }
+      return off;
+    }, crowdIds);
+    const camera = await page.evaluate(() => window.__world?.camera);
+    console.log(
+      `[e2e#2] framing ${viewport.width}×${viewport.height} (canvas aspect ` +
+        `${camera?.aspect.toFixed(2)}): ${crowdIds.length} dinos on the 4–8 m ring → camera ` +
+        `${JSON.stringify(camera?.position)} fov ${camera?.fov}`,
+    );
+
+    expect(missed, `nobody may be off frame at ${viewport.width}×${viewport.height}`).toEqual([]);
+    expect(await page.evaluate(() => window.__world?.offscreen)).toBe(0);
+  }
 });
 
 test('the world idles when live and is perfectly frozen under ?static=1', async ({ page }) => {
@@ -187,11 +309,9 @@ test('the world idles when live and is perfectly frozen under ?static=1', async 
   const liveBefore = await plate.boundingBox();
   expect(liveBefore).toBeTruthy();
   /*
-   * Polled rather than sampled once after a fixed wait (Wave 4, Chunk 4.1):
-   * the assertion is unchanged — the plate must really travel — but the wander
-   * only advances on rendered frames, and a worker sharing the machine with
-   * several other SwiftShader browsers can render almost none inside a fixed
-   * 1.2 s. This gives the same fact room to be observed.
+   * Polled rather than sampled once after a fixed wait: the wander only
+   * advances on rendered frames, and a worker sharing the machine with several
+   * other SwiftShader browsers can render almost none in a fixed 1.2 s.
    */
   await expect
     .poll(async () => Math.abs(((await plate.boundingBox())?.x ?? 0) - (liveBefore?.x ?? 0)), {
@@ -241,7 +361,6 @@ test('a drawing can be swapped at runtime without rebuilding the model', async (
   expect(after.materialBuilds).toBe(before.materialBuilds);
   expect(after.textureErrors).toEqual({});
 
-  // The other dinos are untouched.
   for (const player of drawn) {
     if (player.id === target.id) continue;
     expect(after.appliedTextures[player.id]).toBe(player.textureHash);

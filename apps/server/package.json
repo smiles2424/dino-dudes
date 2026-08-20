@@ -4,14 +4,18 @@
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
+  "//files": "What `pnpm deploy` copies into the container image (Chunk 5.3): the build, the migrations it applies on boot, and the migrate script itself. Not src, not test, not the loadtest.",
+  "files": ["dist", "drizzle", "scripts"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "test": "tsc -p tsconfig.json && node --test test/data-layer.test.mjs test/rest-api.test.mjs test/lobby-room.test.mjs",
+    "test": "tsc -p tsconfig.json && node --test test/data-layer.test.mjs test/rest-api.test.mjs test/lobby-room.test.mjs test/robustness.test.mjs",
+    "loadtest": "tsx loadtest/lobby-loadtest.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "db:migrate:deploy": "node scripts/migrate.mjs",
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
@@ -29,6 +33,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@colyseus/loadtest": "^0.16.2",
     "@colyseus/testing": "^0.16.3",
     "@types/node": "^22.10.2",
     "@types/pg": "^8.23.1",

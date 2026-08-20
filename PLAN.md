@@ -172,14 +172,62 @@ build + `pnpm test --force` + cumulative `pnpm e2e` before the next launches.
   (`pnpm build` clean · `pnpm test --force` 67/67 · `pnpm e2e` 12/12).
 - **Human checkpoint:** real paper-to-screen dry run with 3–5 people.
 
-### Wave 5 — Hardening & deploy  `[ ] not started` *(optional, 1 opus agent)*
-- [ ] `@colyseus/loadtest` ~50 clients in one lobby
-- [ ] Deploy: server → Railway/Fly/Render; client → Vercel/Netlify; CI deploy on `main`
-- [ ] Lobby lifecycle polish (idle dispose, `closed_at`), rate limiting on upload
+### Wave 5 — Hardening & deploy  `[x] done` *(3 opus agents, SEQUENTIAL chunks, one branch)*
+Branch: `wave-5/hardening` — each chunk gates on build + `pnpm test --force` + cumulative
+`pnpm e2e` before the next launches. This wave also closes the open Follow-up checks below.
+
+**Chunk 5.1 — world sync & framing** *(1 opus agent)*
+- [x] Server-seeded motion: wander computed from server-issued seed + server clock so every
+      client renders identical trajectories (closes the "two-client world consistency"
+      follow-up); upgrade the flagship's position assertion to sample DURING motion
+      — *room state carries `motionSeed`/`motionEpoch`/`serverTime` (500 ms tick); the flagship
+      measures 0–1 ms clock skew and 1–5 mm between the two clients' moving dinos.*
+- [x] Every dino on screen: fix the ~17% off-frustum spawns (camera framing from player
+      count, wider fov, or smaller ring); re-record affected screenshot baselines
+      — *`world/camera-fit.ts` dollies (then widens) the projector shot until every dino's whole
+      reachable box is framed; E2E #2 proves it for 12 dinos on the full ring, landscape and
+      portrait; `world-static.png` re-recorded.*
+- [x] `/debug/world` harness keeps working (E2E #2) — deterministic static mode preserved
+      — *harness still times its own wander (`motion.source === 'local'`), `?static=1` still t=0
+      at DPR 1 in a fixed 800×500 frame; new `?size=WxH` renders any aspect for the framing test.*
+
+**Chunk 5.2 — data & robustness** *(1 opus agent)*
+- [x] Split texture blob (content-addressed, shared) from wearer record (per player) —
+      closes the "one texture, one owner" follow-up sharp edge
+      — *migration `0001_split_textures_from_wearers`: new `textures(hash PK, bytes, created_at)`,
+      `avatars` is now one row per player (`player_id` UNIQUE, `texture_hash` a plain FK).*
+- [x] Lobby lifecycle polish (idle dispose, `closed_at`), rate limiting on `POST /api/avatars`
+      — *`lobby-lifecycle.ts`: one UPDATE on room dispose (and an occasional sweep on lobby
+      create) closes lobbies quiet for `LOBBY_IDLE_HOURS`; `rate-limit.ts`: token bucket per
+      person (12/min, burst 6) and per IP (10×, for the venue's shared NAT), off under
+      `NODE_ENV=test`.*
+- [x] `@colyseus/loadtest` ~50 clients in one lobby — script committed + numbers recorded
+      — *`apps/server/loadtest/lobby-loadtest.ts`, `pnpm --filter @dino/server loadtest`:
+      50/50 joined and synced, join p50 113 ms / p95 152 ms, upload→state on the **last** of
+      50 clients 2–41 ms, 2.1 patches/s per client, server RSS 82 MB flat.*
+
+**Chunk 5.3 — deploy readiness** *(1 opus agent)*
+- [x] Server containerized/deployable to Railway/Fly/Render (Dockerfile + config), client
+      static build for Vercel/Netlify; production env documented (`.env.example` parity)
+      — *multi-stage root `Dockerfile` (pnpm-workspace aware, `pnpm deploy --legacy --prod`
+      prunes to 231 prod packages), boot = migrate-then-serve, `/healthz` HEALTHCHECK;
+      `render.yaml` (`numInstances: 1`) for the server and `netlify.toml` (SPA rewrite +
+      immutable asset caching) for the client; `docs/DEPLOY.md` has Fly/Vercel equivalents.*
+- [x] CI deploy workflow on `main`, gated on deploy secrets (skips cleanly without)
+      — *`deploy` job, `needs: build-test-e2e`, push-to-`main` only, deploy-hook URLs
+      (`RENDER_DEPLOY_HOOK_URL` / `NETLIFY_BUILD_HOOK_URL`) rather than CLI logins.*
+- [x] Code-split `/play` (1.3 MB bundle → faster phone first-load)
+      — *`/`'s eager JS went **1292 kB → 270 kB (372 kB → 87 kB gzipped, −77%)**: the 3D
+      routes and the capture flow's preview step are `lazy()`, three.js is its own
+      843 kB chunk that a phone fetches while the child is typing their name.*
+- **Gate (whole wave):** `[x]` full cumulative suite green (`pnpm build` clean ·
+  `pnpm test --force` **75/75** · `pnpm e2e` **14/14**); loadtest numbers recorded (Chunk 5.2).
+- **Human checkpoint:** actual deploy (needs YOUR hosting accounts/credentials — agent
+  prepares everything, human clicks); then the venue dry run on deployed URLs.
 
 ## Follow-up checks (validate before the event)
 
-- [ ] **Two-client world consistency** *(raised by human 2026-08-18 after the Wave 2 art
+- [x] **Two-client world consistency** *(raised by human 2026-08-18 after the Wave 2 art
       review)*: two browsers in the SAME lobby must see the SAME world — dino positions and
       orientations in sync. `/debug/world` drifts across instances today by design (wander is
       seeded locally and timed from each page's own load clock; the harness has no backend).
@@ -193,12 +241,20 @@ build + `pnpm test --force` + cumulative `pnpm e2e` before the next launches.
       **wander**, which remains client-local and therefore still drifts between screens once
       motion starts; only the spawn state agrees. Server-authoritative (or seeded) motion is
       still the fix, and the flagship already has the assertion waiting for it.
-- [ ] **Every dino must be on screen** *(found by the flagship E2E, Chunk 4.3)*: `spawnFor`
+      **CLOSED in Chunk 5.1:** the room now issues `motionSeed` + `motionEpoch` and reposts
+      `serverTime` every 500 ms; clients evaluate the wander at *server* time, and the flagship
+      measures clock skew 0–1 ms, identical trajectories (delta exactly 0 at an agreed future
+      instant) and 1–5 mm between the two browsers' *moving* dinos sampled together.
+- [x] **Every dino must be on screen** *(found by the flagship E2E, Chunk 4.3)*: `spawnFor`
       places players on a 4–8 m ring around the origin, but the projector camera
       (`[0.6, 3.6, 11.5]`, 42° fov) only covers ≈±32°, so **~17 % of spawn points fall outside
       the frame** — roughly one child in six would not see their dinosaur. Fix in Wave 5 by
       pulling the camera back / widening the fov (re-record E2E #2's baseline) or by shrinking
       the spawn ring; better still, frame the camera from the actual player count.
+      **CLOSED in Chunk 5.1:** the camera is fitted to the live world — `world/camera-fit.ts`
+      dollies the hand-tuned shot back (and, only for a portrait phone, widens the lens) until
+      every dino's whole *reachable* box is in frame; `window.__world.offscreen` must be 0 and
+      E2E #2 proves it for 12 dinos on the full 4–8 m ring at 1.78 and 0.50 aspect.
 - [x] **The 5 s promise was almost entirely the texture download** *(measured and fixed in
       Chunk 4.3)*: of an upload→projector time of 1.4–4.4 s the Colyseus patch was ~20 ms and
       `GET /api/textures/:hash` was 0.8–3.9 s — a ~1 MB PNG fetched from Upstash over the
@@ -209,12 +265,19 @@ build + `pnpm test --force` + cumulative `pnpm e2e` before the next launches.
       memory hit: **3–33 ms, and fan-out 0.07–0.8 s**. Content-addressed keys make it
       unfalsifiable. Still open for Wave 5: multi-instance deployments warm one memo per
       instance, and the venue's uplink still carries the *upload*.
-- [ ] **One texture, one owner** *(sharp edge confirmed in Chunk 4.3)*: `avatars.texture_hash`
+- [x] **One texture, one owner** *(sharp edge confirmed in Chunk 4.3)*: `avatars.texture_hash`
       is UNIQUE and `POST /api/avatars` upserts on it, so identical bytes from a second player
       move the row's `player_id` — and a lobby rebuilt from Postgres then hydrates the robbed
       player with no drawing. Harmless for real children (nobody draws byte-identical
       pictures) but it bit two E2E specs that shared a fixture photo. The clean fix is to split
       the blob (content-addressed, shared) from the wearer record (per player).
+      **CLOSED in Chunk 5.2:** the blob moved to a `textures` table keyed by its own sha256, and
+      `avatars` became the wearer record — one row per player (`player_id` UNIQUE,
+      `texture_hash` a *non*-unique FK). An upload is now "ensure the texture row exists
+      (`onConflictDoNothing`), then upsert **my** wearer row", so byte-identical uploads from two
+      players give two dinos wearing one stored drawing. Asserted through the API
+      (`rest-api.test.mjs`, "two players uploading identical bytes both keep their dino") and at
+      the schema level (`data-layer.test.mjs`). Two E2E specs may share a fixture photo again.
 
 ---
 
@@ -638,3 +701,188 @@ Append-only. Every agent adds a line when it finishes (or blocks): `date — wav
   today); and E2E #4's `confirm → dino on the game view` is 10–17 s against a 15 s budget,
   dominated by a cold second page load of a 1.3 MB bundle — code-splitting `/play` is the
   obvious win and would also make the phone's hand-off feel instant.
+- 2026-08-19 — Wave 5 / Chunk 5.1 world sync & framing — **done** — branch `wave-5/hardening`.
+  **Motion is now shared, not merely identical-looking.** `LobbyState` gained three additive
+  fields (`motionSeed`, `motionEpoch`, `serverTime`; `LobbyStateSchema` mirrors them with
+  defaults so an older server still parses): the room mints one seed per lobby, records the
+  epoch motion time counts from, and rewrites `serverTime` every `SERVER_TIME_TICK_MS` (500 ms)
+  from `this.clock.setInterval` — which fires immediately *before* each patch is serialized, so
+  the value a client receives is one network hop stale, not one tick. **The epochs are
+  `float64` on purpose**: Colyseus's `'number'` degrades to float32 for large values, which
+  quantises a ~1.8e12 ms timestamp into ~131 s steps and would have made the whole scheme
+  useless; `lobby-room.test.mjs` watches a tick land (~500 ms, never 0 or 131 072) to prove ms
+  precision survives the wire. Each client estimates its offset as the **largest**
+  `serverTime - Date.now()` it has seen (a page busy compiling shaders processes a patch late,
+  which reads as an offset that is too small; every later sample can only correct it upward),
+  then evaluates the wander at `Date.now() + offset - epoch`. Wander parameters are hashed from
+  `seed:playerId` instead of `playerId`, so the trajectory is a pure function of state.
+  Measured by the flagship, repeatedly: **clock skew between the two browsers 0–1 ms**,
+  **identical trajectories (delta exactly `0` when both are asked for B's pose at an agreed
+  future instant)** and **1–5 mm between the two clients' *moving* dinos** sampled at the same
+  wall-clock moment (budget 0.35 m; the pre-Wave-5 behaviour was metres apart). That closes the
+  "two-client world consistency" follow-up with the dinosaurs walking. `/debug/world` passes no
+  motion source and keeps its page-local clock (`motion.source === 'local'`), and `?static=1`
+  is untouched: t = 0, DPR 1, fixed 800×500.
+  **Every dino is on screen.** New `apps/web/src/world/camera-fit.ts` keeps the hand-tuned
+  projector angle and dollies it back (≤3×) until every dino's whole *reachable* box —
+  `motionBounds()`, the exact interval the wander can visit, at foot and head height — is inside
+  the frustum with a 12 % margin; only if that saturates (a phone in portrait, whose horizontal
+  field is far too narrow for a 16 m world) does it widen the lens, up to 80°. It is pure,
+  clamped at 1× (a one-dino lobby looks exactly as before) and quantised, so two clients holding
+  one state compute one camera — which is what keeps the flagship's cross-client canvas
+  comparison meaningful (still **0 of 2560 cells differ**). Wander amplitudes were trimmed
+  (max excursion ~2.6 m rather than ~4.6 m) so framing a full lobby does not turn the animals
+  into specks. Verified by a new E2E #2 test on a new fixture `public/debug/world-crowd.json` —
+  **12 dinos on the full 4–8 m spawn ring, sampled every 0.25 s across a whole 60 s wander
+  period**, at 1.78 aspect (projector: camera `[0.924, 4.842, 17.71]`, fov 42) and 0.50 aspect
+  (phone: camera `[1.8, 8.2, 34.5]`, fov 68) — plus `window.__world.offscreen === 0` asserted
+  live in E2E #2, #3 and the flagship.
+  **`window.__world` is now `version: 3`** (additive): `poses` (the *animated* transform per
+  player, rewritten every frame, each carrying the motion time it was evaluated at), `motion`
+  (`source`/`seed`/`epoch`/`offsetMs`/`samples`), `camera` (the fitted shot + canvas aspect),
+  `offscreen`, `motionTime()` and the analytical hooks `poseAtTime(id, t)` /
+  `playerOnScreen(id, t)`. E2E #2/#3/#5 assert `version === 3`. `/debug/world` also gained
+  `?size=WxH`, which pins the canvas to an exact size (the camera fits itself to the canvas
+  *aspect*, and the page's own CSS never produces a phone-shaped frame).
+  **Baseline re-recorded**: `e2e/tests/__screenshots__/02-world.spec.ts/world-static.png` — the
+  harness camera legitimately moved from `[0.6, 3.6, 11.5]` to `[0.702, 3.991, 13.455]` because
+  the fit now guarantees the bronto at (7.2, −6.2) stays framed for its whole wander. Recorded
+  on Windows/SwiftShader as before; re-record with `pnpm e2e:only -- --update-snapshots` if a
+  future change moves it again.
+  **Gate:** `pnpm build` 4/4 · `pnpm test --force` **68/68** node (shared 14, server **22**,
+  pipeline 32) · `pnpm e2e` **14/14** (two new framing tests). Notes for Chunk 5.2: (a) the
+  room's `move` message is still the only path that can move a dino authoritatively and still
+  nobody sends one — motion stays a client-side function of synced state, which is what makes
+  it free; (b) `SERVER_TIME_TICK_MS` is 2 tiny patches/second per room, worth remembering when
+  the loadtest puts ~50 clients in one lobby; (c) `spawnFor`'s 4–8 m ring is unchanged, so
+  nothing about lobby data moved — 5.2's texture/lifecycle work does not touch any of this.
+- 2026-08-19 — Wave 5 / Chunk 5.2 (data & robustness) — done — **One texture, one owner is
+  closed at the schema.** Migration `0001_split_textures_from_wearers` (applied to the real
+  Neon) adds `textures(hash PK, bytes, created_at)` — the drawing, addressed by its own sha256
+  and shared — and turns `avatars` into the *wearer* record: one row per player
+  (`player_id` UNIQUE), `texture_hash` a plain FK, `texture` column dropped. The migration
+  moves blobs across (`INSERT … SELECT DISTINCT ON (texture_hash)`) and collapses any avatar
+  history to the newest row per player before adding the constraints; against the real database
+  it moved **nothing**, because `avatars`/`players` were empty (Waves 3–4 test litter had
+  already been cleaned) — 3 stale lobby rows survived untouched and have since been stamped
+  `closed_at` by the new idle sweep. `POST /api/avatars` is now "ensure the texture row exists
+  (`onConflictDoNothing` on the hash) → upsert **my** wearer row (`onConflictDoUpdate` on
+  `player_id`)", so **duplicate bytes from a second player are shared, not stolen**: two dinos,
+  one stored PNG, both still there when the lobby rehydrates. `GET /api/textures/:hash` reads
+  `textures` and no longer cares who wears the drawing; `loadLobbyMembers` lost its
+  "latest per player" fold; `cleanup-e2e-rows.mjs` deletes textures nobody wears.
+  **Lifecycle:** `lobby-lifecycle.ts` — idle == the room is gone AND nothing (join or upload)
+  has happened for `LOBBY_IDLE_HOURS` (12). That is one race-safe UPDATE, run on
+  `LobbyRoom.onDispose` for that lobby and as an occasional (≤1 per 10 min) untargeted sweep on
+  `POST /api/lobbies`. No scheduler, no timer, and a server that sleeps all night closes
+  yesterday's lobbies when the next party starts. `GET /api/lobbies/:code` now answers **409
+  `lobby_closed`** instead of a 200 with `closedAt` set (the web client got the 409/429
+  sentences), the upload route already refused, and room join keeps rejecting with 4090.
+  `POST /api/lobbies` already accepted an optional `name` — verified, untouched.
+  **Rate limiting:** `rate-limit.ts`, a ~40-line token bucket in process. Two buckets per
+  upload: by IP *before* the multipart body is drained (a stuck retry loop costs a header
+  parse, not 2 MB), and by IP+lobby+player after the fields parse. The per-person allowance is
+  **12/min, burst 6** (continuous refill, so thinking between retakes is never punished) and the
+  per-IP one is deliberately **10×** that — at the venue a whole class is behind one Wi-Fi NAT,
+  so a strict per-address limit would refuse the party rather than the abuser. Refusal is
+  `rate_limited` 429 + `Retry-After`. **Disabled by default under `NODE_ENV=test`/`node --test`** so E2E stays
+  deterministic, which is why the maths is asserted at the unit with an injected clock
+  (`test/robustness.test.mjs`, which also drives the idle sweep against real Neon).
+  `.env.example` documents both knobs — and empty values there now read as *unset*, not as `0`.
+  **Loadtest** (`apps/server/loadtest/lobby-loadtest.ts`, `pnpm --filter @dino/server loadtest`,
+  manual only): starts the built server on port 2568, creates a real lobby, joins N clients,
+  uploads mid-run, then cleans its own rows out of Neon. **50/50 joined, 50/50 synced** (every
+  client sees all 50 players), join p50 **113 ms** / p95 **152 ms** / max 939 ms; five 117 kB
+  uploads accepted in 1.36–1.60 s each (localhost multipart + Neon write) and reaching the
+  **slowest of the 50 clients' state in 2–41 ms**; **2.10 patches/s per client** (1050 patches
+  across 50 clients in 10 s — the 500 ms `serverTime` tick, exactly as predicted by 5.1);
+  server RSS **82.5 → 82.1 MB** flat under load. `--tui` hands the same client script to
+  `@colyseus/loadtest`'s dashboard.
+  **Gate:** `pnpm build` clean · `pnpm test --force` **75/75** (shared 14, server **29**,
+  pipeline 32) · `pnpm e2e` **14/14**. Notes for Chunk 5.3: (a) the limiter and the texture
+  memo are both **per process**, so a multi-instance deploy multiplies the effective upload
+  limit and warms one memo per instance — worth a line in the deploy docs, and the reason to
+  prefer one server instance for the event; (b) two new env knobs to carry into the production
+  env/`.env.example` parity check (`AVATAR_UPLOAD_LIMIT_PER_MIN`, `LOBBY_IDLE_HOURS`), and a
+  container must run `db:migrate` (journal is at `0001`) before serving; (c) `pnpm test` still
+  hits the real Neon/Upstash, so CI without secrets skips those files as before.
+- 2026-08-19 — Wave 5 / Chunk 5.3 (deploy readiness) — done — **the phone stopped paying for
+  three.js, and the deploy is now a form to fill in.** `/`'s eager JS went **1292 kB → 270 kB
+  (372 → 87 kB gzipped, −77 %)**. The split is two dynamic-import boundaries, not a router:
+  `main.tsx` `lazy()`s `/play` and `/debug/world`, and — the one that actually mattered —
+  `CapturePage` `lazy()`s `PreviewStage`, because the capture flow renders the *same*
+  `WorldView` in its last step, so splitting only the routes would have shipped three.js to
+  step 1 anyway. A `warmPreview()` prefetch fires the moment the child leaves "Who are you?",
+  so the renderer downloads during the name/model/photograph steps and the Suspense fallback
+  never paints. `manualChunks` pins `three` (843 kB) and `react` (143 kB) into their own
+  long-lived files — thirty phones on one Wi-Fi, and a redeploy between two classes must not
+  re-download the renderer. **Sharp edge worth remembering:** Rollup parked Vite's
+  `__vitePreload` helper *inside* the `three` chunk, which made the entry statically import it
+  and put a `modulepreload` for 843 kB in `index.html` — the split looked done and wasn't.
+  The helper now gets its own 1 kB chunk; `index.html` preloads only `react` + `preload`.
+  E2E is untouched and still **14/14**: every assertion waits on `window.__world` or a testid
+  that lives *inside* the lazy component, so Suspense is invisible to it.
+  **Container:** root `Dockerfile`, three stages (manifest-only install layer → tsc for
+  shared+server → `pnpm deploy --legacy --filter=@dino/server --prod`). `--legacy` is
+  deliberate: pnpm 10's new deploy wants `inject-workspace-packages=true`. `@dino/server` grew
+  a `files` list so the pruned tree is exactly `dist/ drizzle/ scripts/ node_modules/`.
+  Boot is `node scripts/migrate.mjs && exec node dist/index.js` — fail-fast, and `exec` so
+  node is PID 1 and still gets SIGTERM for Colyseus's graceful shutdown. **`scripts/migrate.mjs`
+  is new** because `pnpm db:migrate` is drizzle-kit, a *devDependency* the prod image must not
+  carry; it runs `drizzle-orm`'s own migrator over the same `drizzle/` folder and the same
+  `__drizzle_migrations` table (so the two are interchangeable), over `DATABASE_URL_UNPOOLED`,
+  and exits 0 with a SKIP line when there is no database at all.
+  **Docker was NOT available** (client 20.10.10, daemon not running), so the image is
+  unbuilt — but the thing it *contains* was validated on the host: `pnpm deploy` produced the
+  pruned tree (231 prod packages, no typescript/tsx/drizzle-kit), which then migrated against
+  the real Neon (`up to date in 1494ms`) and served `/healthz` **200
+  `{"redis":true,"postgres":true}`** under `NODE_ENV=production`. What is unvalidated is only
+  the Dockerfile's plumbing: base image, corepack, layer copies.
+  **Hosts:** `render.yaml` (Docker runtime, `healthCheckPath: /healthz`, `plan: starter`
+  because free instances sleep 15 min and cold-start ≈50 s = a blank projector, `autoDeploy:
+  false` so only tested pushes ship) and `netlify.toml` (`base: .`, `pnpm --filter
+  @dino/web... build`, the **SPA 200-rewrite** without which `/play?lobby=` 404s, and
+  `immutable` caching on the content-hashed `/assets/*`). `numInstances: 1` is a *correctness*
+  setting, per 5.2's note (a): rooms, the rate limiter and the texture memo are all
+  per-process. Fly `fly.toml` and Vercel `vercel.json` equivalents are in the docs.
+  **CI:** a `deploy` job, `needs: build-test-e2e`, `push` to `main` only, gated in-step
+  (secrets can't be used in a job `if:`) on `RENDER_DEPLOY_HOOK_URL` /
+  `NETLIFY_BUILD_HOOK_URL` — absent, it prints SKIP and passes. Hooks, not CLI logins: a
+  leaked hook can only redeploy the branch the host already tracks. An optional
+  `vars.DEPLOY_SERVER_URL` adds a best-effort `/healthz` line to the run summary.
+  `.env.example` gained `HOST`, `PUBLIC_WEB_URL` and `CORS_ORIGIN` (parity with `env.ts`) plus
+  the VITE-is-build-time warning; `docs/DEPLOY.md` is the human's step-by-step and points at
+  `docs/DRY-RUN-CHECKLIST.md` for the venue rehearsal on deployed URLs.
+  **Gate (closes Wave 5):** `pnpm build` clean · `pnpm test --force` **75/75** (shared 14,
+  server 29, pipeline 32) · `pnpm e2e` **14/14**. Remaining is human-only: create the Render
+  and Netlify accounts, paste the Neon/Upstash secrets, set `VITE_API_URL` then
+  `PUBLIC_WEB_URL` (the two that point the halves at each other, and the two that are silently
+  wrong if you skip a rebuild), add the two hook secrets, and run the dry-run checklist
+  against the live URLs.
+- 2026-08-20 — Wave 5 / deflake (pre-PR) — done — **three test ceilings sat below the latency
+  of the thing they were waiting on.** Found while gating 5.3: the server suite failed 2 of 3
+  full runs (green standalone), always on the Colyseus join wait 5.2 had seen trip once.
+  There is **no server bug** — `LobbyRoom.onJoin`'s only `await` is the Neon round-trip in
+  `#resolvePlayerId` (the Redis write is fire-and-forget with its own `.catch`, the state
+  write is synchronous after it), so a join takes exactly as long as Neon takes: 1–6 s from
+  here, while `node --test` runs `lobby-room` alongside three other files hammering the same
+  connection. `waitFor`'s default 8 s → **20 s**: every caller taking the default asks a
+  *correctness* question ("did this ever reach the other client"), and the file's one real
+  latency budget — the 5 s avatar fan-out — measures its own window and is untouched
+  (observed 0–90 ms). The `serverTime` bounds widened on the same reasoning: they only ever
+  had to separate a ~500 ms tick from the 131 s quantum a float32 field would show, and 30 s
+  is an order of magnitude from both. A stale `~1000ms` comment now matches
+  `SERVER_TIME_TICK_MS = 500`.
+  **E2E:** `02-world` ran on `playwright.config.ts`'s 30 s default while three of its tests
+  build the SwiftShader scene **twice** — "the world idles when live" alone budgets 66 s of
+  inner waits — which is how it failed at 33.5 s mid-second-load with siblings passing at
+  28.2 s and 33.3 s. Now file-wide `test.describe.configure({ timeout: 120_000 })`, matching
+  what 04/05 already do. `03-live-lobby` measured at the same exposure and got the same 120 s
+  on its heavy test **only**: it builds the scene *and* waits on a real upload, worst 12.2 s
+  of 30 s on a quiet box against the ~2.6× load factor observed on 02. Per-step waits
+  everywhere stay tight — they are the real guard against a hang.
+  **Gate:** `pnpm typecheck` 7/7 · **five consecutive full `pnpm test --force` runs green**,
+  each 75/75 node (shared 14, server 29, pipeline 32) + `pnpm e2e` 14/14. Watch item, not
+  acted on: `03`'s trivial "prompts for a code" test was seen once at 9.6 s (usually 1–3 s)
+  absorbing web-server warm-up; it keeps the 30 s default deliberately, since widening a
+  DOM-only check would cost the hang guard more than it buys.

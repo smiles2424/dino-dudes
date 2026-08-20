@@ -82,7 +82,7 @@ dd {
   margin-bottom: 0;
 }
 
-/* ── 3D world (WS-C) ─────────────────────────────────────────────────────── */
+/* ── 3D world ─────────────────────────────────────────────────────── */
 
 .debug-world {
   display: flex;
@@ -105,6 +105,17 @@ dd {
 }
 
 .debug-world--static .world-frame {
+  flex: none;
+  min-height: 0;
+}
+
+/* `?size=WxH`: the same escape from the fill-the-window layout, without
+   freezing the clock — how a test renders the world at a phone's aspect. */
+.debug-world--pinned {
+  display: block;
+}
+
+.debug-world--pinned .world-frame {
   flex: none;
   min-height: 0;
 }
@@ -155,7 +166,7 @@ dd {
   color: #48d597;
 }
 
-/* ── /play — the live game view (Wave 4, Chunk 4.1) ──────────────────────── */
+/* ── /play — the live game view ──────────────────────── */
 
 /* The world fills the screen; every HUD element floats over it, so the
    projector shows the world and nothing else competes with it. */
@@ -311,7 +322,7 @@ button:disabled {
   opacity: 0.5;
 }
 
-/* ── Capture flow (Wave 4, Chunk 4.2) ─────────────────────────────────────
+/* ── Capture flow ─────────────────────────────────────
    Mobile-first and thumb-first: one question per card, nothing interactive
    under 3 rem tall, and no horizontal scrolling at 320 px. */
 

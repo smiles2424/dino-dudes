@@ -1,29 +1,17 @@
 /**
- * `/` — the capture flow (Wave 4, Chunk 4.2). This is the page a phone lands
- * on after scanning the projector's QR code, so every decision here is a
- * mobile-first, school-event-crowd decision: one question per screen, big
- * touch targets, a spinner on anything that takes longer than a blink, and no
- * button that can be pressed twice.
+ * `/` — the capture flow, the page a phone lands on after scanning the QR code.
+ * One question per screen, big touch targets, and no button that can be pressed
+ * twice: details → model → photo → preview → `POST /api/avatars` → `/play`.
  *
- *   details  name + lobby code (prefilled from `?lobby=CODE`, checked against
- *            `GET /api/lobbies/:code` before anyone draws a thing)
- *      ↓
- *   model    which dinosaur — the picker draws the same silhouette the printed
- *            template carries
- *      ↓
- *   photo    `<input type="file" capture="environment">` → downscale → the
- *            REAL `@dino/pipeline` deskew, in this browser. A failure comes
- *            back as a four-entry per-corner diagnostic and becomes the retake
- *            UI; blur/distance warnings are advisory only.
- *      ↓
- *   preview  the drawing on the actual 3D model (`<WorldView>`, the projector's
- *            own renderer) → confirm → `POST /api/avatars` → `/play?…`
+ * The photo step runs the real `@dino/pipeline` deskew in this browser; a
+ * failure comes back as a four-entry per-corner diagnostic and becomes the
+ * retake UI, while blur and distance warnings are advisory only.
  *
  * There is no auth: name + lobby code is the identity, by design. The
  * `playerId` the upload returns is passed on to `/play` so the room adopts the
  * persisted player instead of minting a second dino for the same person.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import {
   CORNER_LABELS,
   LobbyCodeSchema,
@@ -36,9 +24,26 @@ import { PipelineError } from '@dino/pipeline';
 import { ApiClientError, fetchLobby, uploadAvatar } from '../api.js';
 import { captureTexture, type CapturedTexture } from './photo.js';
 import { DinoSilhouette } from './DinoSilhouette.js';
-import { PreviewStage } from './PreviewStage.js';
 
 type Step = 'details' | 'model' | 'photo' | 'preview';
+
+/**
+ * The preview is the only 3D thing on this page and it is the *last* of four
+ * steps, so three.js has no business in the bundle the phone parses before it
+ * can show "Who are you?".
+ *
+ * `warmPreview()` starts the download as soon as the child picks a dinosaur,
+ * buying the whole photograph-and-process step as head start, so the Suspense
+ * fallback never paints. Idempotent — both the browser and the module registry
+ * dedupe it — so calling it on every render of the model step is free.
+ */
+const PreviewStage = lazy(async () => ({
+  default: (await import('./PreviewStage.js')).PreviewStage,
+}));
+
+function warmPreview(): void {
+  void import('./PreviewStage.js');
+}
 
 /** What went wrong with a photo: markers we can explain, or anything else. */
 type Failure =
@@ -78,6 +83,12 @@ export function CapturePage(): JSX.Element {
 
   // Every capture holds an object URL for a ~1 MB PNG; drop the old one as
   // soon as it is replaced, and on unmount.
+  // Start pulling the renderer down the moment the child leaves step 1 — see
+  // `warmPreview` above. Nothing depends on it resolving.
+  useEffect(() => {
+    if (step !== 'details') warmPreview();
+  }, [step]);
+
   const capturedUrl = captured?.url;
   useEffect(
     () => () => {
@@ -171,7 +182,7 @@ export function CapturePage(): JSX.Element {
         textureHash: captured.hash,
       });
       // Hand `/play` the persisted player id — that is what stops the room
-      // giving this person a second, empty dino (Chunk 4.1, note (b)).
+      // giving this person a second, empty dino.
       const params = new URLSearchParams({
         lobby: code,
         name,
@@ -361,12 +372,20 @@ export function CapturePage(): JSX.Element {
       {step === 'preview' && captured ? (
         <div className="card capture-card" data-testid="capture-preview">
           <h2>Meet your dinosaur</h2>
-          <PreviewStage
-            name={name}
-            modelSlug={modelSlug}
-            textureUrl={captured.url}
-            textureKey={captured.hash ?? 'capture-preview-texture'}
-          />
+          <Suspense
+            fallback={
+              <p className="processing" role="status">
+                <Spinner label="Building your dinosaur…" />
+              </p>
+            }
+          >
+            <PreviewStage
+              name={name}
+              modelSlug={modelSlug}
+              textureUrl={captured.url}
+              textureKey={captured.hash ?? 'capture-preview-texture'}
+            />
+          </Suspense>
 
           {captured.warnings.map((warning) => (
             <p key={warning} className="warning" data-testid="capture-warning" data-warning={warning}>
@@ -413,12 +432,10 @@ export function CapturePage(): JSX.Element {
 }
 
 /**
- * The retake UI, straight off `PipelineError.payload.corners`.
- *
- * The pipeline is all-or-nothing — it needs all four markers — so a failure
- * always reports every corner. Showing the found ones too is the point: it
- * turns "it didn't work" into "three of four; move your thumb off the
- * bottom-left square".
+ * The retake UI, straight off `PipelineError.payload.corners`. The pipeline is
+ * all-or-nothing, so a failure always reports every corner; showing the found
+ * ones too is the point, turning "it didn't work" into "three of four; move
+ * your thumb off the bottom-left square".
  */
 function CornerHints({ payload }: { payload: PipelineErrorPayload }): JSX.Element {
   return (
