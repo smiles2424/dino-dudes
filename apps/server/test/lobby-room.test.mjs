@@ -64,8 +64,21 @@ const broadcastsB = [];
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
-/** Polls `predicate` until it returns something truthy, or gives up loudly. */
-async function waitFor(label, predicate, timeoutMs = 8000) {
+/**
+ * Polls `predicate` until it returns something truthy, or gives up loudly.
+ *
+ * The default ceiling is deliberately generous. Every caller that takes it is
+ * asking a **correctness** question — "did this ever reach the other client" —
+ * not a latency one (the one latency budget in this file measures its own
+ * window explicitly, see the avatar test). Getting there costs real Neon
+ * round-trips: `onJoin` resolves a player id against Postgres before the
+ * joining client is put into state, and this connection has been measured at
+ * 1–6 s per round-trip. `pnpm test --force` runs this file alongside the
+ * shared and pipeline suites *and* the three other server test files, so the
+ * old 8 s could expire on a busy machine while the join was still perfectly
+ * healthy. A wait that is wrong only when the box is loaded tests the box.
+ */
+async function waitFor(label, predicate, timeoutMs = 20_000) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     let value;
@@ -206,7 +219,16 @@ describe('Chunk 3.3 LobbyRoom (real Colyseus + Fastify + Neon + Upstash)', () =>
        * Colyseus's `'number'` is float32 for large values, which quantises a
        * ~1.8e12 epoch to steps of ~131 s — hence `float64` in `LobbyRoom`.
        * Watching one tick land proves it: a quantised field would advance by
-       * either 0 or 131 072 ms, never by the ~1 s the room actually waits.
+       * either 0 or 131 072 ms, never by the ~0.5 s the room actually waits.
+       *
+       * The bounds below are what separates those two worlds, and nothing
+       * else. They are NOT a latency budget: under `pnpm test --force` this
+       * process shares the machine with five other test processes, and a
+       * stalled event loop coalesces `clock` ticks — so the *observed* step is
+       * one tick under a quiet box and can be several seconds under a busy
+       * one, in both cases proving exactly the same thing. 30 s sits an order
+       * of magnitude below the 131 s quantum a float32 field would show, and
+       * an order of magnitude above any stall this suite can produce.
        */
       const first = clientA.state.toJSON().serverTime;
       assert.ok(first > 0, 'serverTime must be published');
@@ -216,12 +238,11 @@ describe('Chunk 3.3 LobbyRoom (real Colyseus + Fastify + Neon + Upstash)', () =>
           const now = clientA.state.toJSON().serverTime;
           return now > first ? now : undefined;
         },
-        6000,
       );
       const step = advanced - first;
-      assert.ok(step >= 200 && step <= 3000, `serverTime advanced by ${step}ms, expected ~1000ms`);
+      assert.ok(step >= 200 && step < 30_000, `serverTime advanced by ${step}ms, expected ~500ms`);
       assert.ok(
-        Math.abs(advanced - Date.now()) < 2000,
+        Math.abs(advanced - Date.now()) < 30_000,
         `serverTime ${advanced} is ${Math.abs(advanced - Date.now())}ms from this process's clock`,
       );
 

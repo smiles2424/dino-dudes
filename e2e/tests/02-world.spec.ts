@@ -117,6 +117,27 @@ test.use({
   },
 });
 
+/*
+ * Every test in this file builds the whole 3D scene on **SwiftShader** — a
+ * software rasteriser, deliberately (see the header), so one committed baseline
+ * is valid on every OS. A scene build costs 8–25 s that way, and
+ * `fullyParallel` runs several of these specs on the same machine at once, so
+ * the 30 s default in `playwright.config.ts` — which is sized for the DOM
+ * specs — is smaller than this file's own inner waits: `openWorld()` alone may
+ * spend 25 s, and "every dino stays inside the frame, for every moment of its
+ * wander" loads the world **twice** (static, then live) with a 25 s allowance
+ * each. Under `pnpm test --force` that test failed at 33.5 s, mid-second-load,
+ * while its siblings passed at 28.2 s and 33.3 s — i.e. the whole file was
+ * running against a ceiling it can exceed whenever the box is busy.
+ *
+ * Nothing here asserts how *fast* the world appears; the assertions are about
+ * geometry, textures and framing being right once it does. The per-step waits
+ * above stay tight — they are the real guard against a hang — and only the
+ * total gets the headroom the software renderer actually needs, matching what
+ * `04-capture-flow` and `05-flagship` already do for their heavy specs.
+ */
+test.describe.configure({ timeout: 120_000 });
+
 async function openWorld(page: import('@playwright/test').Page): Promise<void> {
   const failures: string[] = [];
   page.on('pageerror', (error) => failures.push(error.message));

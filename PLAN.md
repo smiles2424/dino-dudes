@@ -859,3 +859,30 @@ Append-only. Every agent adds a line when it finishes (or blocks): `date — wav
   `PUBLIC_WEB_URL` (the two that point the halves at each other, and the two that are silently
   wrong if you skip a rebuild), add the two hook secrets, and run the dry-run checklist
   against the live URLs.
+- 2026-08-20 — Wave 5 / deflake (pre-PR) — done — **three test ceilings sat below the latency
+  of the thing they were waiting on.** Found while gating 5.3: the server suite failed 2 of 3
+  full runs (green standalone), always on the Colyseus join wait 5.2 had seen trip once.
+  There is **no server bug** — `LobbyRoom.onJoin`'s only `await` is the Neon round-trip in
+  `#resolvePlayerId` (the Redis write is fire-and-forget with its own `.catch`, the state
+  write is synchronous after it), so a join takes exactly as long as Neon takes: 1–6 s from
+  here, while `node --test` runs `lobby-room` alongside three other files hammering the same
+  connection. `waitFor`'s default 8 s → **20 s**: every caller taking the default asks a
+  *correctness* question ("did this ever reach the other client"), and the file's one real
+  latency budget — the 5 s avatar fan-out — measures its own window and is untouched
+  (observed 0–90 ms). The `serverTime` bounds widened on the same reasoning: they only ever
+  had to separate a ~500 ms tick from the 131 s quantum a float32 field would show, and 30 s
+  is an order of magnitude from both. A stale `~1000ms` comment now matches
+  `SERVER_TIME_TICK_MS = 500`.
+  **E2E:** `02-world` ran on `playwright.config.ts`'s 30 s default while three of its tests
+  build the SwiftShader scene **twice** — "the world idles when live" alone budgets 66 s of
+  inner waits — which is how it failed at 33.5 s mid-second-load with siblings passing at
+  28.2 s and 33.3 s. Now file-wide `test.describe.configure({ timeout: 120_000 })`, matching
+  what 04/05 already do. `03-live-lobby` measured at the same exposure and got the same 120 s
+  on its heavy test **only**: it builds the scene *and* waits on a real upload, worst 12.2 s
+  of 30 s on a quiet box against the ~2.6× load factor observed on 02. Per-step waits
+  everywhere stay tight — they are the real guard against a hang.
+  **Gate:** `pnpm typecheck` 7/7 · **five consecutive full `pnpm test --force` runs green**,
+  each 75/75 node (shared 14, server 29, pipeline 32) + `pnpm e2e` 14/14. Watch item, not
+  acted on: `03`'s trivial "prompts for a code" test was seen once at 9.6 s (usually 1–3 s)
+  absorbing web-server warm-up; it keeps the 30 s default deliberately, since widening a
+  DOM-only check would cost the hang guard more than it buys.

@@ -85,6 +85,16 @@ test('the game view prompts for a code when the URL has no lobby', async ({ page
 
 test('a drawing uploaded over HTTP appears on the spectator screen', async ({ page, request }) => {
   test.skip(!(await postgresConfigured(request)), 'no DATABASE_URL — skipping the live lobby E2E');
+  /*
+   * Same headroom `02-world` and `04-capture-flow` take, for the same reason:
+   * this spec builds the SwiftShader scene *and* waits on a real Neon upload,
+   * which the note above measures at 1.5–8 s. That is ~12 s of the 30 s
+   * default on a quiet box, and a busy one has been observed stretching a
+   * scene build by ~2.6×. The per-step budgets are untouched — FANOUT_BUDGET_MS
+   * still holds the room to 5 s, and it is the assertion that means something.
+   * Only the total gets room, so a loaded machine cannot fail a healthy run.
+   */
+  test.setTimeout(120_000);
 
   const failures: string[] = [];
   page.on('pageerror', (error) => failures.push(error.message));
